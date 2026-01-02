@@ -28,6 +28,8 @@ tokio = { version = "1.35", features = [
     "signal",
     "io-util",
     "macros",
+    "fs",
+    "process",
 ] }
 
 # Serialization

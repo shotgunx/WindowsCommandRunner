@@ -2,6 +2,8 @@
 pub mod cancellation;
 pub mod error;
 #[cfg(windows)]
+pub mod file_ipc;
+#[cfg(windows)]
 pub mod io_pump;
 #[cfg(windows)]
 pub mod job_manager;

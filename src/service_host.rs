@@ -1,4 +1,5 @@
 use crate::error::{Error, Result};
+use crate::file_ipc::FileIpcServer;
 use crate::job_manager::JobManager;
 use crate::pipe_server::PipeServer;
 use std::sync::Arc;
@@ -38,6 +39,17 @@ impl ServiceHost {
             tokio::spawn(async move {
                 if let Err(e) = server.start_listening().await {
                     tracing::error!(error = %e, "Pipe server error");
+                }
+            })
+        };
+
+        // Spawn file-based IPC server
+        let file_ipc_handle = {
+            let shutdown_rx = self.shutdown_rx.clone();
+            let file_ipc = FileIpcServer::new(shutdown_rx);
+            tokio::spawn(async move {
+                if let Err(e) = file_ipc.run().await {
+                    tracing::error!(error = %e, "File IPC server error");
                 }
             })
         };
@@ -84,6 +96,7 @@ impl ServiceHost {
 
         cleanup_handle.abort();
         server_handle.abort();
+        file_ipc_handle.abort();
         tracing::info!("Service stopped");
         Ok(())
     }
