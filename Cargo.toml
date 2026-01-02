@@ -17,6 +17,7 @@ windows = { version = "0.58", features = [
     "Win32_System_JobObjects",
     "Win32_System_Memory",
     "Win32_Storage_FileSystem",
+    "Win32_System_WindowsProgramming",
 ] }
 
 # Async runtime - with macros for select!

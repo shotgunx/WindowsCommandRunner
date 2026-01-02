@@ -4,9 +4,9 @@ use crate::error::{Error, Result};
 use std::ffi::OsStr;
 use std::iter::once;
 use std::os::windows::ffi::OsStrExt;
-use std::ptr::{null, null_mut};
-use windows::core::PCWSTR;
-use windows::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
+use std::ptr::null_mut;
+use windows::core::{PCWSTR, PWSTR};
+use windows::Win32::Foundation::{CloseHandle, HANDLE};
 use windows::Win32::Security::SECURITY_ATTRIBUTES;
 use windows::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
@@ -15,9 +15,10 @@ use windows::Win32::System::JobObjects::{
 };
 use windows::Win32::System::Pipes::CreatePipe;
 use windows::Win32::System::Threading::{
-    CreateProcessW, SetHandleInformation, CREATE_NEW_PROCESS_GROUP, CREATE_UNICODE_ENVIRONMENT,
-    HANDLE_FLAG_INHERIT, PROCESS_INFORMATION, STARTF_USESTDHANDLES, STARTUPINFOW,
+    CreateProcessW, CREATE_NEW_PROCESS_GROUP, CREATE_UNICODE_ENVIRONMENT, PROCESS_INFORMATION,
+    STARTF_USESTDHANDLES, STARTUPINFOW,
 };
+use windows::Win32::System::WindowsProgramming::SetHandleInformation;
 
 pub struct ChildPipeHandles {
     pub stdin_read: HANDLE,
@@ -163,9 +164,16 @@ impl ProcessLauncher {
         let creation_flags = CREATE_NEW_PROCESS_GROUP | CREATE_UNICODE_ENVIRONMENT;
 
         unsafe {
+            // CreateProcessW expects PWSTR (mutable) for command line
+            let mut cmd_wide_mut = cmd_wide.clone();
+            let cmd_ptr = PWSTR::from_raw(cmd_wide_mut.as_mut_ptr());
+
+            // For working directory, we need to pass Option<PCWSTR> correctly
+            let wd_ptr = wd_wide.as_ref().map(|w| PCWSTR::from_raw(w.as_ptr()));
+
             CreateProcessW(
                 None,
-                PCWSTR::from_raw(cmd_wide.as_ptr()),
+                cmd_ptr,
                 None,
                 None,
                 true,
@@ -173,7 +181,7 @@ impl ProcessLauncher {
                 env_block
                     .as_ref()
                     .map(|b| b.as_ptr() as *const std::ffi::c_void),
-                wd_wide.as_ref().map(|w| PCWSTR::from_raw(w.as_ptr())),
+                wd_ptr,
                 &mut startup_info,
                 &mut process_info,
             )
@@ -216,10 +224,11 @@ impl ProcessLauncher {
                 .map_err(|e| Error::ProcessLaunchFailed(format!("CreatePipe stderr: {}", e)))?;
 
             // Make parent ends non-inheritable
-            // Second param is mask, third is flags. Setting HANDLE_FLAG_INHERIT to 0 means non-inheritable
-            let _ = SetHandleInformation(stdin_write, HANDLE_FLAG_INHERIT.0, 0);
-            let _ = SetHandleInformation(stdout_read, HANDLE_FLAG_INHERIT.0, 0);
-            let _ = SetHandleInformation(stderr_read, HANDLE_FLAG_INHERIT.0, 0);
+            // HANDLE_FLAG_INHERIT = 0x00000001, setting to 0 means non-inheritable
+            const HANDLE_FLAG_INHERIT: u32 = 0x00000001;
+            let _ = SetHandleInformation(stdin_write, HANDLE_FLAG_INHERIT, 0);
+            let _ = SetHandleInformation(stdout_read, HANDLE_FLAG_INHERIT, 0);
+            let _ = SetHandleInformation(stderr_read, HANDLE_FLAG_INHERIT, 0);
 
             Ok(ChildPipeHandles {
                 stdin_read,

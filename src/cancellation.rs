@@ -69,8 +69,7 @@ impl CancellationManager {
             } else {
                 let proc_ptr = job.process_handle.get();
                 if proc_ptr != 0 {
-                    let proc_handle = HANDLE(proc_ptr as *mut std::ffi::c_void);
-                    if Self::wait_for_exit_timeout(proc_handle, Duration::from_secs(5))
+                    if Self::wait_for_exit_timeout(proc_ptr, Duration::from_secs(5))
                         .await
                         .is_ok()
                     {
@@ -93,12 +92,13 @@ impl CancellationManager {
         Ok(())
     }
 
-    async fn wait_for_exit_timeout(process_handle: HANDLE, timeout: Duration) -> Result<()> {
+    async fn wait_for_exit_timeout(process_handle_ptr: isize, timeout: Duration) -> Result<()> {
         let deadline = Instant::now() + timeout;
 
         while Instant::now() < deadline {
             let signaled = unsafe {
-                let result = WaitForSingleObject(process_handle, WAIT_TIMEOUT_MS);
+                let handle = HANDLE(process_handle_ptr as *mut std::ffi::c_void);
+                let result = WaitForSingleObject(handle, WAIT_TIMEOUT_MS);
                 result.0 == WAIT_OBJECT_0
             };
 

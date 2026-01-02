@@ -45,8 +45,9 @@ impl PipeServer {
         tracing::info!(pipe = PIPE_NAME, "Starting pipe server");
 
         loop {
-            // Create pipe instance
+            // Create pipe instance and convert to isize immediately for Send safety
             let pipe_handle = Self::create_pipe_instance()?;
+            let handle_ptr = pipe_handle.0 as isize;
 
             // Acquire permit
             let permit = self
@@ -57,7 +58,6 @@ impl PipeServer {
                 .map_err(|_| Error::Service("Semaphore closed".to_string()))?;
 
             let server = self.clone();
-            let handle_ptr = pipe_handle.0 as isize;
 
             tokio::task::spawn_blocking(move || {
                 let runtime = tokio::runtime::Handle::current();
@@ -105,8 +105,7 @@ impl PipeServer {
                 PIPE_BUFFER_SIZE,
                 0,
                 Some(&sa as *const _),
-            )
-            .map_err(|e| Error::Service(format!("CreateNamedPipeW: {}", e)))?;
+            );
 
             if handle.is_invalid() {
                 return Err(Error::Service(

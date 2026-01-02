@@ -1,7 +1,6 @@
 #![cfg(windows)]
 
 use crate::error::{Error, Result};
-use bytes::Bytes;
 use dashmap::DashMap;
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -202,15 +201,16 @@ impl JobManager {
         }
 
         tracing::debug!(job_id, from = %old_state, to = %new_state, "Job state transition");
-        *state_guard = new_state;
 
-        // Update last_activity and completed_at timestamps
+        // Update last_activity and completed_at timestamps before moving new_state
         let now = SystemTime::now();
+        let is_terminal = new_state.is_terminal();
         *job.last_activity.lock().unwrap() = now;
-        if new_state.is_terminal() {
+        if is_terminal {
             *job.completed_at.lock().unwrap() = Some(now);
         }
 
+        *state_guard = new_state;
         drop(state_guard);
 
         Ok(old_state)

@@ -146,9 +146,9 @@ impl Frame {
         let mut buf = BytesMut::with_capacity(frame_len);
         buf.put_u8(self.frame_type as u8);
         buf.put_u8(self.stream_id as u8);
-        buf.put_u16_be(self.flags);
-        buf.put_u32_be(self.job_id);
-        buf.put_u32_be(self.sequence_number);
+        buf.put_u16(self.flags.to_be());
+        buf.put_u32(self.job_id.to_be());
+        buf.put_u32(self.sequence_number.to_be());
         buf.put_slice(&self.payload);
 
         Ok(buf.freeze())
