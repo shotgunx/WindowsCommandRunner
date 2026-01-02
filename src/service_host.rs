@@ -10,8 +10,9 @@ use tokio::sync::watch;
 const SERVICE_NAME: &str = "VirimaRemoteAgent";
 const MAX_CONCURRENT_JOBS: usize = 50;
 const MAX_CONNECTIONS: usize = 100;
-const IDLE_CLEANUP_INTERVAL: Duration = Duration::from_secs(5); // Check every 5 seconds
-const IDLE_CLEANUP_THRESHOLD: Duration = Duration::from_secs(10); // Clean up after 10 seconds idle
+const IDLE_CLEANUP_INTERVAL: Duration = Duration::from_secs(30); // Check every 30 seconds
+const IDLE_CLEANUP_THRESHOLD: Duration = Duration::from_secs(30 * 60); // Clean up after 30 minutes idle
+const QUIET_CLEANUP_THRESHOLD: Duration = Duration::from_secs(2 * 60); // Clean up all if quiet for 2 minutes
 
 pub struct ServiceHost {
     shutdown_tx: watch::Sender<bool>,
@@ -54,7 +55,7 @@ impl ServiceHost {
                 loop {
                     tokio::select! {
                         _ = interval.tick() => {
-                            job_manager.cleanup_idle_jobs(IDLE_CLEANUP_THRESHOLD);
+                            job_manager.cleanup_idle_jobs(IDLE_CLEANUP_THRESHOLD, QUIET_CLEANUP_THRESHOLD);
                         }
                         _ = shutdown_rx.changed() => {
                             tracing::debug!("Cleanup task shutting down");

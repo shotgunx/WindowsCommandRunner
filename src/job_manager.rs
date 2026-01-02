@@ -135,6 +135,7 @@ pub struct JobManager {
     jobs: DashMap<u32, Arc<JobHandle>>,
     next_job_id: AtomicU32,
     max_concurrent_jobs: usize,
+    last_job_created: Mutex<SystemTime>,
 }
 
 impl JobManager {
@@ -143,6 +144,7 @@ impl JobManager {
             jobs: DashMap::new(),
             next_job_id: AtomicU32::new(1),
             max_concurrent_jobs,
+            last_job_created: Mutex::new(SystemTime::now()),
         }
     }
 
@@ -177,6 +179,7 @@ impl JobManager {
         });
 
         self.jobs.insert(job_id, handle.clone());
+        *self.last_job_created.lock().unwrap() = now;
         tracing::debug!(job_id, "Job created");
         Ok(handle)
     }
