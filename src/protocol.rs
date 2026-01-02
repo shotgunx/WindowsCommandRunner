@@ -44,7 +44,10 @@ impl TryFrom<u8> for FrameType {
             0xF0 => Ok(FrameType::Error),
             0xFE => Ok(FrameType::Ping),
             0xFF => Ok(FrameType::Pong),
-            _ => Err(Error::Protocol(format!("Unknown frame type: 0x{:02x}", value))),
+            _ => Err(Error::Protocol(format!(
+                "Unknown frame type: 0x{:02x}",
+                value
+            ))),
         }
     }
 }
@@ -172,14 +175,16 @@ impl Frame {
         let frame_type = FrameType::try_from(header_buf[0])?;
         let stream_id = StreamId::try_from(header_buf[1])?;
         let flags = u16::from_le_bytes([header_buf[2], header_buf[3]]);
-        let job_id_raw = u32::from_le_bytes([
-            header_buf[4], header_buf[5], header_buf[6], header_buf[7],
-        ]);
-        let sequence_raw = u32::from_le_bytes([
-            header_buf[8], header_buf[9], header_buf[10], header_buf[11],
-        ]);
+        let job_id_raw =
+            u32::from_le_bytes([header_buf[4], header_buf[5], header_buf[6], header_buf[7]]);
+        let sequence_raw =
+            u32::from_le_bytes([header_buf[8], header_buf[9], header_buf[10], header_buf[11]]);
 
-        let job_id = if job_id_raw != 0 { Some(job_id_raw) } else { None };
+        let job_id = if job_id_raw != 0 {
+            Some(job_id_raw)
+        } else {
+            None
+        };
         let sequence_number = if sequence_raw != 0 {
             Some(sequence_raw)
         } else {
@@ -209,7 +214,9 @@ fn read_exact<R: Read>(reader: &mut R, buf: &mut [u8]) -> Result<()> {
     while total_read < buf.len() {
         match reader.read(&mut buf[total_read..]) {
             Ok(0) => {
-                return Err(Error::Protocol("Unexpected EOF while reading frame".to_string()));
+                return Err(Error::Protocol(
+                    "Unexpected EOF while reading frame".to_string(),
+                ));
             }
             Ok(n) => total_read += n,
             Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
@@ -268,4 +275,3 @@ pub struct WindowUpdatePayload {
 // Frame flags
 pub const FLAG_EOS: u16 = 0x01; // End of stream
 pub const FLAG_URGENT: u16 = 0x02; // Urgent frame
-

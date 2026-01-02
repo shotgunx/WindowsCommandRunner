@@ -85,7 +85,8 @@ impl ServiceHost {
 
         // Graceful shutdown
         tracing::info!("Shutdown signal received, initiating graceful shutdown");
-        self.graceful_shutdown(job_manager, self.config.graceful_shutdown_timeout).await?;
+        self.graceful_shutdown(job_manager, self.config.graceful_shutdown_timeout)
+            .await?;
 
         // Cancel server task
         server_handle.abort();
@@ -136,7 +137,7 @@ impl ServiceHost {
         timeout: Duration,
     ) -> Result<()> {
         let active_jobs = job_manager.list_active_jobs();
-        
+
         if active_jobs.is_empty() {
             tracing::info!("No active jobs to cancel");
             return Ok(());

@@ -3,10 +3,10 @@ use crate::protocol::RunPayload;
 use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
 use std::path::Path;
-use windows::Win32::Foundation::{CloseHandle, HANDLE, BOOL};
+use windows::Win32::Foundation::{CloseHandle, BOOL, HANDLE};
 use windows::Win32::System::Threading::{
     CreateProcessW, CREATE_NO_WINDOW, CREATE_UNICODE_ENVIRONMENT, PROCESS_INFORMATION,
-    STARTUPINFOW, STARTF_USESTDHANDLES,
+    STARTF_USESTDHANDLES, STARTUPINFOW,
 };
 
 /// Process information returned after successful launch
@@ -46,16 +46,16 @@ pub struct ProcessLauncher;
 
 impl ProcessLauncher {
     /// Launch a process with the given configuration
-    /// 
+    ///
     /// # Arguments
     /// * `payload` - Run configuration (command line, working dir, env vars)
     /// * `stdout_write` - Write end of stdout pipe (will be inherited by child)
     /// * `stderr_write` - Write end of stderr pipe (will be inherited by child)
     /// * `stdin_read` - Read end of stdin pipe (will be inherited by child)
-    /// 
+    ///
     /// # Returns
     /// * `ProcessInfo` - Process handle and ID
-    /// 
+    ///
     /// # Note
     /// Caller must close stdout_write, stderr_write, stdin_read handles AFTER
     /// this function returns successfully (child now owns them).
@@ -76,7 +76,7 @@ impl ProcessLauncher {
         // Validate command line is not empty
         if payload.command_line.trim().is_empty() {
             return Err(Error::ProcessLaunchFailed(
-                "Command line cannot be empty".to_string()
+                "Command line cannot be empty".to_string(),
             ));
         }
 
@@ -131,13 +131,13 @@ impl ProcessLauncher {
 
         // Launch process
         let creation_flags = CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT;
-        
+
         unsafe {
             let success = CreateProcessW(
                 None, // Application name (use command line instead)
                 windows::core::PWSTR::from_raw(cmd_line_wide.as_mut_ptr()),
-                None, // Process security attributes
-                None, // Thread security attributes
+                None,             // Process security attributes
+                None,             // Thread security attributes
                 BOOL::from(true), // Inherit handles
                 creation_flags,
                 Some(env_ptr),
@@ -149,7 +149,7 @@ impl ProcessLauncher {
             if success.as_bool() {
                 // Close thread handle immediately (not needed)
                 CloseHandle(process_info.hThread).ok();
-                
+
                 tracing::debug!(
                     pid = process_info.dwProcessId,
                     "Process launched successfully"
@@ -201,7 +201,7 @@ impl ProcessLauncher {
             }
             if key.is_empty() {
                 return Err(Error::ProcessLaunchFailed(
-                    "Environment variable name cannot be empty".to_string()
+                    "Environment variable name cannot be empty".to_string(),
                 ));
             }
             // Validate value (no null characters)
@@ -225,9 +225,8 @@ impl ProcessLauncher {
     /// Create a Windows Job Object for process tree management
     pub fn create_job_object() -> Result<HANDLE> {
         use windows::Win32::System::JobObjects::{
-            CreateJobObjectW, SetInformationJobObject,
-            JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
-            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+            CreateJobObjectW, JobObjectExtendedLimitInformation, SetInformationJobObject,
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
         };
 
         unsafe {

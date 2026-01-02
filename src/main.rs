@@ -9,7 +9,7 @@ async fn main() -> Result<()> {
 
     // Check if running as Windows Service
     let args: Vec<String> = env::args().collect();
-    
+
     if args.iter().any(|a| a == "--service") {
         // Run as Windows Service
         #[cfg(windows)]
@@ -26,7 +26,7 @@ async fn main() -> Result<()> {
     } else {
         // Run in console mode
         tracing::info!("Starting in console mode (Ctrl+C to stop)");
-        
+
         let config = ServiceConfig {
             pipe_name: env::var("VIRIMA_PIPE_NAME")
                 .unwrap_or_else(|_| r"\\.\pipe\VirimaRemoteAgent".to_string()),
@@ -56,8 +56,7 @@ async fn main() -> Result<()> {
 fn init_logging() {
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info"));
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
     tracing_subscriber::registry()
         .with(fmt::layer().with_target(true).with_thread_ids(true))

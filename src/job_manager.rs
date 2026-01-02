@@ -24,12 +24,16 @@ impl Drop for JobHandle {
         // Ensure handles are closed when JobHandle is dropped
         if let Ok(mut guard) = self.process_handle.lock() {
             if let Some(h) = guard.take() {
-                unsafe { CloseHandle(h).ok(); }
+                unsafe {
+                    CloseHandle(h).ok();
+                }
             }
         }
         if let Ok(mut guard) = self.job_object.lock() {
             if let Some(h) = guard.take() {
-                unsafe { CloseHandle(h).ok(); }
+                unsafe {
+                    CloseHandle(h).ok();
+                }
             }
         }
     }
@@ -148,11 +152,7 @@ impl JobManager {
         self.jobs.get(&job_id).map(|entry| entry.value().clone())
     }
 
-    pub fn transition_state(
-        &self,
-        job_id: u32,
-        new_state: JobState,
-    ) -> Result<JobState> {
+    pub fn transition_state(&self, job_id: u32, new_state: JobState) -> Result<JobState> {
         let job = self.get_job(job_id).ok_or(Error::JobNotFound(job_id))?;
 
         let mut state_guard = job.state.lock().unwrap();
@@ -179,7 +179,11 @@ impl JobManager {
         {
             let state = job.state.lock().unwrap();
             if state.is_terminal() {
-                tracing::debug!(job_id, reason, "Job already in terminal state, skipping cancel");
+                tracing::debug!(
+                    job_id,
+                    reason,
+                    "Job already in terminal state, skipping cancel"
+                );
                 return Ok(());
             }
         }
@@ -203,7 +207,7 @@ impl JobManager {
 
         // Wait for pumps to finish (with timeout)
         let pump_timeout = Duration::from_secs(5);
-        
+
         let stdout_handle = {
             let mut guard = job.stdout_pump.lock().unwrap();
             guard.take()
@@ -224,7 +228,9 @@ impl JobManager {
         {
             let mut handle_guard = job.process_handle.lock().unwrap();
             if let Some(h) = handle_guard.take() {
-                unsafe { CloseHandle(h).ok(); }
+                unsafe {
+                    CloseHandle(h).ok();
+                }
             }
         }
 
@@ -232,7 +238,9 @@ impl JobManager {
         {
             let mut job_obj_guard = job.job_object.lock().unwrap();
             if let Some(h) = job_obj_guard.take() {
-                unsafe { CloseHandle(h).ok(); }
+                unsafe {
+                    CloseHandle(h).ok();
+                }
             }
         }
 

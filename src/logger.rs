@@ -14,7 +14,12 @@ impl Logger {
         }
     }
 
-    pub fn log_event(&self, level: LogLevel, message: &str, fields: Option<&HashMap<String, String>>) -> Result<()> {
+    pub fn log_event(
+        &self,
+        level: LogLevel,
+        message: &str,
+        fields: Option<&HashMap<String, String>>,
+    ) -> Result<()> {
         // Format log entry
         let mut log_entry = format!("[{}] {}", level, message);
         if let Some(fields) = fields {
@@ -50,11 +55,7 @@ impl Logger {
             fields.insert("working_directory".to_string(), cwd.to_string());
         }
 
-        self.log_event(
-            LogLevel::Info,
-            "COMMAND_STARTED",
-            Some(&fields),
-        )
+        self.log_event(LogLevel::Info, "COMMAND_STARTED", Some(&fields))
     }
 
     pub fn audit_command_completed(
@@ -68,11 +69,7 @@ impl Logger {
         fields.insert("exit_code".to_string(), exit_code.to_string());
         fields.insert("duration_ms".to_string(), duration_ms.to_string());
 
-        self.log_event(
-            LogLevel::Info,
-            "COMMAND_COMPLETED",
-            Some(&fields),
-        )
+        self.log_event(LogLevel::Info, "COMMAND_COMPLETED", Some(&fields))
     }
 
     pub fn audit_command_failed(
@@ -86,11 +83,7 @@ impl Logger {
         fields.insert("error_code".to_string(), error_code.to_string());
         fields.insert("error_message".to_string(), error_message.to_string());
 
-        self.log_event(
-            LogLevel::Error,
-            "COMMAND_FAILED",
-            Some(&fields),
-        )
+        self.log_event(LogLevel::Error, "COMMAND_FAILED", Some(&fields))
     }
 
     pub fn audit_command_canceled(&self, job_id: u32, reason: &str) -> Result<()> {
@@ -98,23 +91,18 @@ impl Logger {
         fields.insert("job_id".to_string(), job_id.to_string());
         fields.insert("reason".to_string(), reason.to_string());
 
-        self.log_event(
-            LogLevel::Warn,
-            "COMMAND_CANCELED",
-            Some(&fields),
-        )
+        self.log_event(LogLevel::Warn, "COMMAND_CANCELED", Some(&fields))
     }
 
     pub fn audit_access_denied(&self, client_user: &str, attempted_command: &str) -> Result<()> {
         let mut fields = HashMap::new();
         fields.insert("client_user".to_string(), client_user.to_string());
-        fields.insert("attempted_command".to_string(), attempted_command.to_string());
+        fields.insert(
+            "attempted_command".to_string(),
+            attempted_command.to_string(),
+        );
 
-        self.log_event(
-            LogLevel::Warn,
-            "ACCESS_DENIED",
-            Some(&fields),
-        )
+        self.log_event(LogLevel::Warn, "ACCESS_DENIED", Some(&fields))
     }
 }
 
@@ -138,4 +126,3 @@ impl std::fmt::Display for LogLevel {
         }
     }
 }
-

@@ -4,7 +4,7 @@ use bytes::Bytes;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use windows::Win32::Foundation::{HANDLE, ERROR_BROKEN_PIPE, ERROR_MORE_DATA};
+use windows::Win32::Foundation::{ERROR_BROKEN_PIPE, ERROR_MORE_DATA, HANDLE};
 use windows::Win32::Storage::FileSystem::ReadFile;
 
 pub struct StreamPump {
@@ -25,19 +25,19 @@ impl StreamPump {
     }
 
     pub fn update_window(&self, bytes_consumed: u64) {
-        self.send_window.fetch_add(bytes_consumed, Ordering::Release);
-        let old_in_flight = self.bytes_in_flight.fetch_sub(bytes_consumed.min(self.bytes_in_flight.load(Ordering::Acquire)), Ordering::Release);
+        self.send_window
+            .fetch_add(bytes_consumed, Ordering::Release);
+        let old_in_flight = self.bytes_in_flight.fetch_sub(
+            bytes_consumed.min(self.bytes_in_flight.load(Ordering::Acquire)),
+            Ordering::Release,
+        );
         if old_in_flight >= self.send_window.load(Ordering::Acquire) {
             // Window was exhausted, notify waiting pumps
             self.window_condvar.notify_waiters();
         }
     }
 
-    pub async fn try_send_frame(
-        &self,
-        sender: &mpsc::Sender<Frame>,
-        frame: Frame,
-    ) -> Result<()> {
+    pub async fn try_send_frame(&self, sender: &mpsc::Sender<Frame>, frame: Frame) -> Result<()> {
         let data_len = frame.payload.len() as u64;
 
         // Check window with retry loop
@@ -125,7 +125,7 @@ struct PipeReadResult {
 fn read_pipe_blocking(handle: HANDLE, buffer_size: usize) -> Result<PipeReadResult> {
     let mut buffer = vec![0u8; buffer_size];
     let mut bytes_read: u32 = 0;
-    
+
     unsafe {
         let result = ReadFile(
             handle,
@@ -133,7 +133,7 @@ fn read_pipe_blocking(handle: HANDLE, buffer_size: usize) -> Result<PipeReadResu
             Some(&mut bytes_read),
             None, // No overlapped (synchronous)
         );
-        
+
         match result {
             Ok(()) => {
                 if bytes_read == 0 {
@@ -198,11 +198,9 @@ async fn pump_stream(
 
         // Read from pipe using blocking I/O in spawn_blocking
         let handle = pipe_handle;
-        let read_result = spawn_blocking(move || {
-            read_pipe_blocking(handle, MAX_PAYLOAD_SIZE)
-        })
-        .await
-        .map_err(|e| Error::ProcessLaunchFailed(format!("Spawn blocking failed: {}", e)))?;
+        let read_result = spawn_blocking(move || read_pipe_blocking(handle, MAX_PAYLOAD_SIZE))
+            .await
+            .map_err(|e| Error::ProcessLaunchFailed(format!("Spawn blocking failed: {}", e)))?;
 
         match read_result {
             Ok(result) if result.is_eof => {

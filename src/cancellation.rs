@@ -5,16 +5,15 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
 use windows::Win32::Foundation::HANDLE;
-use windows::Win32::System::Threading::{WaitForSingleObject, INFINITE, WAIT_OBJECT_0, WAIT_TIMEOUT};
+use windows::Win32::System::Threading::{
+    WaitForSingleObject, INFINITE, WAIT_OBJECT_0, WAIT_TIMEOUT,
+};
 
 pub struct CancellationManager;
 
 impl CancellationManager {
     /// Monitor job for timeout, terminate if exceeded
-    pub async fn monitor_timeout(
-        job: Arc<JobHandle>,
-        job_manager: Arc<JobManager>,
-    ) {
+    pub async fn monitor_timeout(job: Arc<JobHandle>, job_manager: Arc<JobManager>) {
         let timeout = match job.timeout {
             Some(t) => t,
             None => return, // No timeout configured
@@ -28,14 +27,20 @@ impl CancellationManager {
             {
                 let state = job.state.lock().unwrap().clone();
                 if state.is_terminal() {
-                    tracing::trace!(job_id = job.job_id, "Timeout monitor: job in terminal state");
+                    tracing::trace!(
+                        job_id = job.job_id,
+                        "Timeout monitor: job in terminal state"
+                    );
                     return;
                 }
             }
 
             // Check cancellation token
             if job.cancellation_token.is_cancelled() {
-                tracing::trace!(job_id = job.job_id, "Timeout monitor: cancellation requested");
+                tracing::trace!(
+                    job_id = job.job_id,
+                    "Timeout monitor: cancellation requested"
+                );
                 return;
             }
 
@@ -43,7 +48,7 @@ impl CancellationManager {
             let elapsed = start.elapsed();
             if elapsed >= timeout {
                 tracing::warn!(
-                    job_id = job.job_id, 
+                    job_id = job.job_id,
                     timeout_sec = timeout.as_secs(),
                     elapsed_sec = elapsed.as_secs(),
                     "Job timed out"
@@ -85,11 +90,11 @@ impl CancellationManager {
 
         if let Some(job_obj_handle) = job_obj {
             tracing::debug!(job_id = job.job_id, "Terminating via job object");
-            
+
             if let Err(e) = ProcessLauncher::terminate_job_object(job_obj_handle, 1) {
                 tracing::warn!(
-                    job_id = job.job_id, 
-                    error = %e, 
+                    job_id = job.job_id,
+                    error = %e,
                     "Job object termination failed, trying direct process termination"
                 );
             } else {
@@ -98,9 +103,12 @@ impl CancellationManager {
                     let guard = job.process_handle.lock().unwrap();
                     *guard
                 };
-                
+
                 if let Some(handle) = proc_handle {
-                    if Self::wait_for_exit_timeout(handle, Duration::from_secs(5)).await.is_ok() {
+                    if Self::wait_for_exit_timeout(handle, Duration::from_secs(5))
+                        .await
+                        .is_ok()
+                    {
                         tracing::debug!(job_id = job.job_id, "Process terminated via job object");
                         return Ok(());
                     }
@@ -116,11 +124,12 @@ impl CancellationManager {
 
         if let Some(handle) = proc_handle {
             tracing::debug!(job_id = job.job_id, "Terminating process directly");
-            
+
             use windows::Win32::System::Threading::TerminateProcess;
             unsafe {
-                TerminateProcess(handle, 1)
-                    .map_err(|e| Error::ProcessLaunchFailed(format!("TerminateProcess failed: {}", e)))?;
+                TerminateProcess(handle, 1).map_err(|e| {
+                    Error::ProcessLaunchFailed(format!("TerminateProcess failed: {}", e))
+                })?;
             }
         }
 
@@ -145,7 +154,9 @@ impl CancellationManager {
             sleep(poll_interval).await;
         }
 
-        Err(Error::ProcessLaunchFailed("Process did not exit within timeout".to_string()))
+        Err(Error::ProcessLaunchFailed(
+            "Process did not exit within timeout".to_string(),
+        ))
     }
 
     /// Wait for process to exit (blocking, use spawn_blocking)
@@ -160,7 +171,7 @@ impl CancellationManager {
                 // Wait with periodic checks (1 second intervals) to allow cancellation
                 loop {
                     let result = WaitForSingleObject(process_handle, 1000);
-                    
+
                     if result == WAIT_OBJECT_0 {
                         // Process exited
                         use windows::Win32::System::Threading::GetExitCodeProcess;
