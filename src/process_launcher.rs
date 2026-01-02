@@ -18,7 +18,7 @@ use windows::Win32::System::Threading::{
     CreateProcessW, CREATE_NEW_PROCESS_GROUP, CREATE_UNICODE_ENVIRONMENT, PROCESS_INFORMATION,
     STARTF_USESTDHANDLES, STARTUPINFOW,
 };
-use windows::Win32::System::WindowsProgramming::SetHandleInformation;
+use windows::Win32::System::IO::SetHandleInformation;
 
 pub struct ChildPipeHandles {
     pub stdin_read: HANDLE,
@@ -168,8 +168,8 @@ impl ProcessLauncher {
             let mut cmd_wide_mut = cmd_wide.clone();
             let cmd_ptr = PWSTR::from_raw(cmd_wide_mut.as_mut_ptr());
 
-            // For working directory, we need to pass Option<PCWSTR> correctly
-            let wd_ptr = wd_wide.as_ref().map(|w| PCWSTR::from_raw(w.as_ptr()));
+            // For working directory, pass None or Some(PCWSTR)
+            let wd_ptr: Option<PCWSTR> = wd_wide.as_ref().map(|w| PCWSTR::from_raw(w.as_ptr()));
 
             CreateProcessW(
                 None,
@@ -181,7 +181,7 @@ impl ProcessLauncher {
                 env_block
                     .as_ref()
                     .map(|b| b.as_ptr() as *const std::ffi::c_void),
-                wd_ptr,
+                wd_ptr.as_ref().copied(),
                 &mut startup_info,
                 &mut process_info,
             )

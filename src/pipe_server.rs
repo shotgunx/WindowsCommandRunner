@@ -89,7 +89,7 @@ impl PipeServer {
     fn create_pipe_instance() -> Result<HANDLE> {
         let pipe_name_wide: Vec<u16> = PIPE_NAME.encode_utf16().chain(std::iter::once(0)).collect();
 
-        let mut sa = SECURITY_ATTRIBUTES {
+        let sa = SECURITY_ATTRIBUTES {
             nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
             bInheritHandle: false.into(),
             lpSecurityDescriptor: null_mut(),
