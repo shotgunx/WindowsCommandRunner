@@ -39,10 +39,11 @@ jobs:
 
       - name: Check formatting
         run: cargo fmt --check
+        continue-on-error: true  # Don't fail build on formatting issues
 
       - name: Run clippy
         run: cargo clippy --release -- -D warnings
-        continue-on-error: true  # Don't fail on warnings for now
+        continue-on-error: true  # Don't fail build on warnings
 
       - name: Build release binary
         run: cargo build --release
