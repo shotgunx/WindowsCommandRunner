@@ -104,7 +104,7 @@ impl PipeServer {
                 PIPE_BUFFER_SIZE,
                 PIPE_BUFFER_SIZE,
                 0,
-                Some(&sa),
+                Some(&sa as *const _),
             )
             .map_err(|e| Error::Service(format!("CreateNamedPipeW: {}", e)))?;
 
