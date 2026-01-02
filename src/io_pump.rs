@@ -27,18 +27,15 @@ impl StreamPump {
     }
 
     pub fn update_window(&self, bytes_consumed: u64) {
-        self.send_window.fetch_add(bytes_consumed, Ordering::Release);
+        self.send_window
+            .fetch_add(bytes_consumed, Ordering::Release);
         let current = self.bytes_in_flight.load(Ordering::Acquire);
         self.bytes_in_flight
             .fetch_sub(bytes_consumed.min(current), Ordering::Release);
         self.window_condvar.notify_waiters();
     }
 
-    pub async fn try_send_frame(
-        &self,
-        sender: &mpsc::Sender<Frame>,
-        frame: Frame,
-    ) -> Result<()> {
+    pub async fn try_send_frame(&self, sender: &mpsc::Sender<Frame>, frame: Frame) -> Result<()> {
         let data_len = frame.payload.len() as u64;
 
         loop {
@@ -135,11 +132,12 @@ pub async fn start_output_pump(
             break;
         }
 
-        let read_result = tokio::task::spawn_blocking(move || {
-            read_pipe_blocking(handle_ptr, MAX_PAYLOAD_SIZE)
-        })
-        .await
-        .map_err(|e| Error::ProcessLaunchFailed(format!("Spawn blocking failed: {}", e)))?;
+        // Copy handle_ptr for the closure since it's used in a loop
+        let h = handle_ptr;
+        let read_result =
+            tokio::task::spawn_blocking(move || read_pipe_blocking(h, MAX_PAYLOAD_SIZE))
+                .await
+                .map_err(|e| Error::ProcessLaunchFailed(format!("Spawn blocking failed: {}", e)))?;
 
         match read_result {
             Ok(result) if result.is_eof => {

@@ -144,9 +144,8 @@ impl ProcessLauncher {
             .chain(once(0))
             .collect();
 
-        let wd_wide: Option<Vec<u16>> = working_directory.map(|wd| {
-            OsStr::new(wd).encode_wide().chain(once(0)).collect()
-        });
+        let wd_wide: Option<Vec<u16>> =
+            working_directory.map(|wd| OsStr::new(wd).encode_wide().chain(once(0)).collect());
 
         let env_block: Option<Vec<u16>> = environment.map(|env| Self::build_env_block(env));
 

@@ -79,8 +79,6 @@ impl Default for ServiceHost {
 #[cfg(windows)]
 mod service_impl {
     use super::*;
-    use std::ffi::OsString;
-    use std::sync::OnceLock;
     use ::windows_service::{
         define_windows_service,
         service::{
@@ -90,6 +88,8 @@ mod service_impl {
         service_control_handler::{self, ServiceControlHandlerResult},
         service_dispatcher,
     };
+    use std::ffi::OsString;
+    use std::sync::OnceLock;
 
     static SERVICE_HOST: OnceLock<ServiceHost> = OnceLock::new();
 

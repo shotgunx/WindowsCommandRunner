@@ -20,8 +20,8 @@ use windows::Win32::Storage::FileSystem::{ReadFile, WriteFile, FILE_FLAGS_AND_AT
 // PIPE_ACCESS_DUPLEX (0x3) - Pipe can be used for both reading and writing
 const PIPE_ACCESS_DUPLEX: FILE_FLAGS_AND_ATTRIBUTES = FILE_FLAGS_AND_ATTRIBUTES(0x00000003);
 use windows::Win32::System::Pipes::{
-    ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, PIPE_MODE, PIPE_READMODE_BYTE,
-    PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
+    ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE,
+    PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
 };
 
 const PIPE_NAME: &str = r"\\.\pipe\VirimaRemoteAgent";
@@ -87,10 +87,7 @@ impl PipeServer {
     }
 
     fn create_pipe_instance() -> Result<HANDLE> {
-        let pipe_name_wide: Vec<u16> = PIPE_NAME
-            .encode_utf16()
-            .chain(std::iter::once(0))
-            .collect();
+        let pipe_name_wide: Vec<u16> = PIPE_NAME.encode_utf16().chain(std::iter::once(0)).collect();
 
         let mut sa = SECURITY_ATTRIBUTES {
             nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
@@ -112,7 +109,9 @@ impl PipeServer {
             .map_err(|e| Error::Service(format!("CreateNamedPipeW: {}", e)))?;
 
             if handle.is_invalid() {
-                return Err(Error::Service("CreateNamedPipeW returned invalid handle".to_string()));
+                return Err(Error::Service(
+                    "CreateNamedPipeW returned invalid handle".to_string(),
+                ));
             }
 
             Ok(handle)
@@ -133,7 +132,10 @@ impl PipeServer {
             .map_err(|e| Error::Protocol(format!("Invalid HELLO: {}", e)))?;
 
         if hello.version != PROTOCOL_VERSION {
-            let error_msg = format!("Version mismatch: {} vs {}", hello.version, PROTOCOL_VERSION);
+            let error_msg = format!(
+                "Version mismatch: {} vs {}",
+                hello.version, PROTOCOL_VERSION
+            );
             self.send_error_frame(handle_ptr, 0, &error_msg).await?;
             return Err(Error::Protocol(error_msg));
         }
@@ -231,7 +233,8 @@ impl PipeServer {
             .map_err(|e| Error::Protocol(format!("Send ACK: {}", e)))?;
 
         // Launch process
-        self.job_manager.transition_state(job_id, JobState::Starting)?;
+        self.job_manager
+            .transition_state(job_id, JobState::Starting)?;
 
         let wd = payload.working_directory.as_deref();
         let env = payload.environment.as_ref();
@@ -241,7 +244,8 @@ impl PipeServer {
                 job.process_handle.set(proc.process_handle.0 as isize);
                 job.job_object.set(proc.job_object.0 as isize);
 
-                self.job_manager.transition_state(job_id, JobState::Running)?;
+                self.job_manager
+                    .transition_state(job_id, JobState::Running)?;
 
                 let pump = Arc::new(StreamPump::new(65536, false));
 
@@ -354,7 +358,6 @@ impl PipeServer {
         while offset < size {
             let handle = HANDLE(handle_ptr as *mut std::ffi::c_void);
             let mut bytes_read: u32 = 0;
-            let remaining = size - offset;
 
             unsafe {
                 ReadFile(

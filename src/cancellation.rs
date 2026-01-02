@@ -7,7 +7,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
 use windows::Win32::Foundation::HANDLE;
-use windows::Win32::System::Threading::{GetExitCodeProcess, TerminateProcess, WaitForSingleObject};
+use windows::Win32::System::Threading::{
+    GetExitCodeProcess, TerminateProcess, WaitForSingleObject,
+};
 
 const WAIT_TIMEOUT_MS: u32 = 0;
 // WAIT_OBJECT_0 = 0 - The state of the object is signaled
