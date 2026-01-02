@@ -1,0 +1,135 @@
+name: Build Windows Release
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:  # Manual trigger
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  build:
+    name: Build Windows Binary
+    runs-on: windows-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-action@stable
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Run clippy
+        run: cargo clippy --release -- -D warnings
+        continue-on-error: true  # Don't fail on warnings for now
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Get binary size (before compression)
+        run: |
+          $size = (Get-Item target\release\virima-remote-agent.exe).Length
+          $sizeMB = [math]::Round($size / 1MB, 2)
+          $sizeKB = [math]::Round($size / 1KB, 2)
+          Write-Host "Binary size: $sizeKB KB ($sizeMB MB)"
+          echo "BINARY_SIZE_KB=$sizeKB" >> $env:GITHUB_ENV
+          echo "BINARY_SIZE_BYTES=$size" >> $env:GITHUB_ENV
+
+      - name: Download UPX
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/upx/upx/releases/download/v4.2.2/upx-4.2.2-win64.zip" -OutFile upx.zip
+          Expand-Archive upx.zip -DestinationPath upx
+          Move-Item upx\upx-4.2.2-win64\upx.exe .
+
+      - name: Compress with UPX
+        run: |
+          Copy-Item target\release\virima-remote-agent.exe virima-remote-agent-uncompressed.exe
+          .\upx.exe --best --lzma target\release\virima-remote-agent.exe
+          
+      - name: Get binary size (after compression)
+        run: |
+          $size = (Get-Item target\release\virima-remote-agent.exe).Length
+          $sizeMB = [math]::Round($size / 1MB, 2)
+          $sizeKB = [math]::Round($size / 1KB, 2)
+          Write-Host "Compressed binary size: $sizeKB KB ($sizeMB MB)"
+          echo "COMPRESSED_SIZE_KB=$sizeKB" >> $env:GITHUB_ENV
+
+      - name: Print size comparison
+        run: |
+          Write-Host "================================================"
+          Write-Host "Binary Size Report"
+          Write-Host "================================================"
+          Write-Host "Original:   ${{ env.BINARY_SIZE_KB }} KB"
+          Write-Host "Compressed: ${{ env.COMPRESSED_SIZE_KB }} KB"
+          $reduction = [math]::Round((1 - (${{ env.COMPRESSED_SIZE_KB }} / ${{ env.BINARY_SIZE_KB }})) * 100, 1)
+          Write-Host "Reduction:  $reduction%"
+          Write-Host "================================================"
+
+      - name: Upload uncompressed binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: virima-remote-agent-uncompressed
+          path: virima-remote-agent-uncompressed.exe
+          retention-days: 30
+
+      - name: Upload compressed binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: virima-remote-agent
+          path: target/release/virima-remote-agent.exe
+          retention-days: 30
+
+  # Create release when tag is pushed
+  release:
+    name: Create Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: virima-remote-agent
+          path: ./release
+
+      - name: Download uncompressed artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: virima-remote-agent-uncompressed
+          path: ./release
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            release/virima-remote-agent.exe
+            release/virima-remote-agent-uncompressed.exe
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
+

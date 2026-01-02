@@ -4,34 +4,56 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+# Windows APIs - only what we need
 windows = { version = "0.58", features = [
     "Win32_Foundation",
     "Win32_System_IO",
     "Win32_System_Pipes",
     "Win32_System_Threading",
     "Win32_System_ProcessStatus",
-    "Win32_System_Diagnostics_Debug",
     "Win32_Security",
     "Win32_Security_Authorization",
-    "Win32_System_Registry",
-    "Win32_System_EventLog",
     "Win32_System_SystemServices",
-    "Win32_System_WindowsProgramming",
     "Win32_System_JobObjects",
     "Win32_System_Memory",
     "Win32_Storage_FileSystem",
 ] }
-tokio-util = "0.7"
+
+# Async runtime - minimal features
+tokio = { version = "1.35", features = [
+    "rt-multi-thread",
+    "sync",
+    "time",
+    "signal",
+    "io-util",
+] }
+
+# Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+
+# Utilities
 thiserror = "1.0"
 dashmap = "5.5"
-tokio = { version = "1.35", features = ["full"] }
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-uuid = { version = "1.6", features = ["v4"] }
 bytes = "1.5"
+
+# Logging - minimal
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "ansi", "std"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-service = "0.6"
+tokio-util = "0.7"  # For CancellationToken
 
+[profile.release]
+opt-level = "z"           # Optimize for size
+lto = "fat"               # Aggressive link-time optimization
+codegen-units = 1         # Single codegen unit
+panic = "abort"           # No unwinding
+strip = "symbols"         # Strip all symbols
+debug = false             # No debug info
+overflow-checks = false   # Remove overflow checks
+incremental = false       # Disable incremental (better optimization)
+
+[profile.release.package."*"]
+opt-level = "z"           # Optimize dependencies for size too
