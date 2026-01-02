@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-# Windows APIs - only what we need
+# Windows APIs - comprehensive features
 windows = { version = "0.58", features = [
     "Win32_Foundation",
     "Win32_System_IO",
@@ -19,13 +19,14 @@ windows = { version = "0.58", features = [
     "Win32_Storage_FileSystem",
 ] }
 
-# Async runtime - minimal features
+# Async runtime - with macros for select!
 tokio = { version = "1.35", features = [
     "rt-multi-thread",
     "sync",
     "time",
     "signal",
     "io-util",
+    "macros",
 ] }
 
 # Serialization
@@ -42,18 +43,18 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "ansi", "std"] }
 
 [target.'cfg(windows)'.dependencies]
-windows-service = "0.6"
-tokio-util = "0.7"  # For CancellationToken
+windows-service = "0.7"
+tokio-util = "0.7"
 
 [profile.release]
-opt-level = "z"           # Optimize for size
-lto = "fat"               # Aggressive link-time optimization
-codegen-units = 1         # Single codegen unit
-panic = "abort"           # No unwinding
-strip = "symbols"         # Strip all symbols
-debug = false             # No debug info
-overflow-checks = false   # Remove overflow checks
-incremental = false       # Disable incremental (better optimization)
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
+debug = false
+overflow-checks = false
+incremental = false
 
 [profile.release.package."*"]
-opt-level = "z"           # Optimize dependencies for size too
+opt-level = "z"

@@ -1,19 +1,57 @@
+#![cfg(windows)]
+
 use crate::error::{Error, Result};
 use bytes::Bytes;
 use dashmap::DashMap;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
-use windows::Win32::Foundation::{CloseHandle, HANDLE};
+
+/// A Send-safe wrapper for Windows HANDLE
+#[derive(Debug)]
+pub struct SafeHandle(AtomicUsize);
+
+impl SafeHandle {
+    pub fn new(handle: isize) -> Self {
+        Self(AtomicUsize::new(handle as usize))
+    }
+
+    pub fn get(&self) -> isize {
+        self.0.load(Ordering::SeqCst) as isize
+    }
+
+    pub fn take(&self) -> Option<isize> {
+        let val = self.0.swap(0, Ordering::SeqCst) as isize;
+        if val == 0 {
+            None
+        } else {
+            Some(val)
+        }
+    }
+
+    pub fn set(&self, handle: isize) {
+        self.0.store(handle as usize, Ordering::SeqCst);
+    }
+
+    pub fn is_valid(&self) -> bool {
+        self.get() != 0
+    }
+}
+
+unsafe impl Send for SafeHandle {}
+unsafe impl Sync for SafeHandle {}
+
+impl Default for SafeHandle {
+    fn default() -> Self {
+        Self::new(0)
+    }
+}
 
 pub struct JobHandle {
     pub job_id: u32,
-    pub state: Arc<Mutex<JobState>>,
-    pub process_handle: Arc<Mutex<Option<HANDLE>>>,
-    pub job_object: Arc<Mutex<Option<HANDLE>>>,
-    pub stdout_pump: Arc<Mutex<Option<tokio::task::JoinHandle<Result<()>>>>>,
-    pub stderr_pump: Arc<Mutex<Option<tokio::task::JoinHandle<Result<()>>>>>,
-    pub stdin_writer: Arc<Mutex<Option<tokio::sync::mpsc::Sender<Bytes>>>>,
+    pub state: Mutex<JobState>,
+    pub process_handle: SafeHandle,
+    pub job_object: SafeHandle,
     pub cancellation_token: tokio_util::sync::CancellationToken,
     pub start_time: SystemTime,
     pub timeout: Option<Duration>,
@@ -21,19 +59,17 @@ pub struct JobHandle {
 
 impl Drop for JobHandle {
     fn drop(&mut self) {
-        // Ensure handles are closed when JobHandle is dropped
-        if let Ok(mut guard) = self.process_handle.lock() {
-            if let Some(h) = guard.take() {
-                unsafe {
-                    CloseHandle(h).ok();
-                }
+        use windows::Win32::Foundation::CloseHandle;
+        use windows::Win32::Foundation::HANDLE;
+
+        if let Some(h) = self.process_handle.take() {
+            unsafe {
+                let _ = CloseHandle(HANDLE(h as *mut std::ffi::c_void));
             }
         }
-        if let Ok(mut guard) = self.job_object.lock() {
-            if let Some(h) = guard.take() {
-                unsafe {
-                    CloseHandle(h).ok();
-                }
+        if let Some(h) = self.job_object.take() {
+            unsafe {
+                let _ = CloseHandle(HANDLE(h as *mut std::ffi::c_void));
             }
         }
     }
@@ -63,7 +99,6 @@ impl JobState {
             (JobState::Running, JobState::Failed) => true,
             (JobState::Exiting, JobState::Completed) => true,
             (JobState::Exiting, JobState::Failed) => true,
-            // Allow cancellation from any non-terminal state
             (JobState::Created, JobState::Canceled) => true,
             (JobState::Starting, JobState::Canceled) => true,
             (JobState::Exiting, JobState::Canceled) => true,
@@ -110,7 +145,6 @@ impl JobManager {
     }
 
     pub fn create_job(&self, timeout: Option<Duration>) -> Result<Arc<JobHandle>> {
-        // Check concurrent job limit
         if self.jobs.len() >= self.max_concurrent_jobs {
             return Err(Error::Service(format!(
                 "Maximum concurrent jobs ({}) reached",
@@ -118,26 +152,20 @@ impl JobManager {
             )));
         }
 
-        // FIX: Properly handle job_id wrap-around to skip 0
         let mut job_id = self.next_job_id.fetch_add(1, Ordering::Relaxed);
         if job_id == 0 {
-            // Wrapped around, skip 0 (reserved for "no job")
             job_id = self.next_job_id.fetch_add(1, Ordering::Relaxed);
         }
 
-        // Check for collision (extremely rare but possible)
         if self.jobs.contains_key(&job_id) {
             return Err(Error::JobExists(job_id));
         }
 
         let handle = Arc::new(JobHandle {
             job_id,
-            state: Arc::new(Mutex::new(JobState::Created)),
-            process_handle: Arc::new(Mutex::new(None)),
-            job_object: Arc::new(Mutex::new(None)),
-            stdout_pump: Arc::new(Mutex::new(None)),
-            stderr_pump: Arc::new(Mutex::new(None)),
-            stdin_writer: Arc::new(Mutex::new(None)),
+            state: Mutex::new(JobState::Created),
+            process_handle: SafeHandle::default(),
+            job_object: SafeHandle::default(),
             cancellation_token: tokio_util::sync::CancellationToken::new(),
             start_time: SystemTime::now(),
             timeout,
@@ -175,80 +203,28 @@ impl JobManager {
     pub fn cancel_job(&self, job_id: u32, reason: &str) -> Result<()> {
         let job = self.get_job(job_id).ok_or(Error::JobNotFound(job_id))?;
 
-        // Check if already terminal
         {
             let state = job.state.lock().unwrap();
             if state.is_terminal() {
-                tracing::debug!(
-                    job_id,
-                    reason,
-                    "Job already in terminal state, skipping cancel"
-                );
+                tracing::debug!(job_id, reason, "Job already in terminal state");
                 return Ok(());
             }
         }
 
-        // Cancel token first (signals all workers)
         job.cancellation_token.cancel();
-
-        // Transition to Canceled state (may fail if already terminal, that's OK)
         let _ = self.transition_state(job_id, JobState::Canceled);
 
         tracing::info!(job_id, reason, "Job canceled");
-
         Ok(())
     }
 
-    pub async fn cleanup_job(&self, job_id: u32) -> Result<()> {
+    pub fn cleanup_job(&self, job_id: u32) -> Result<()> {
         let job = self.get_job(job_id).ok_or(Error::JobNotFound(job_id))?;
-
-        // Cancel token (ensures all workers stop)
         job.cancellation_token.cancel();
 
-        // Wait for pumps to finish (with timeout)
-        let pump_timeout = Duration::from_secs(5);
-
-        let stdout_handle = {
-            let mut guard = job.stdout_pump.lock().unwrap();
-            guard.take()
-        };
-        if let Some(handle) = stdout_handle {
-            let _ = tokio::time::timeout(pump_timeout, handle).await;
-        }
-
-        let stderr_handle = {
-            let mut guard = job.stderr_pump.lock().unwrap();
-            guard.take()
-        };
-        if let Some(handle) = stderr_handle {
-            let _ = tokio::time::timeout(pump_timeout, handle).await;
-        }
-
-        // Close process handle (Drop impl will handle this, but explicit is clearer)
-        {
-            let mut handle_guard = job.process_handle.lock().unwrap();
-            if let Some(h) = handle_guard.take() {
-                unsafe {
-                    CloseHandle(h).ok();
-                }
-            }
-        }
-
-        // Close job object
-        {
-            let mut job_obj_guard = job.job_object.lock().unwrap();
-            if let Some(h) = job_obj_guard.take() {
-                unsafe {
-                    CloseHandle(h).ok();
-                }
-            }
-        }
-
-        // Remove from registry
+        // Handles are closed by Drop
         self.jobs.remove(&job_id);
-
         tracing::debug!(job_id, "Job cleaned up");
-
         Ok(())
     }
 
@@ -260,10 +236,10 @@ impl JobManager {
         !self.jobs.is_empty()
     }
 
-    pub async fn force_cleanup_all(&self) -> Result<()> {
+    pub fn force_cleanup_all(&self) -> Result<()> {
         let job_ids: Vec<u32> = self.jobs.iter().map(|entry| *entry.key()).collect();
         for job_id in job_ids {
-            let _ = self.cleanup_job(job_id).await;
+            let _ = self.cleanup_job(job_id);
         }
         Ok(())
     }

@@ -1,43 +1,77 @@
+#![cfg(windows)]
+
 use crate::error::{Error, Result};
-use crate::protocol::RunPayload;
 use std::ffi::OsStr;
+use std::iter::once;
 use std::os::windows::ffi::OsStrExt;
-use std::path::Path;
-use windows::Win32::Foundation::{CloseHandle, BOOL, HANDLE};
+use std::ptr::{null, null_mut};
+use windows::core::PCWSTR;
+use windows::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
+use windows::Win32::Security::SECURITY_ATTRIBUTES;
+use windows::Win32::System::JobObjects::{
+    AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+    SetInformationJobObject, TerminateJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+};
+use windows::Win32::System::Pipes::CreatePipe;
 use windows::Win32::System::Threading::{
-    CreateProcessW, CREATE_NO_WINDOW, CREATE_UNICODE_ENVIRONMENT, PROCESS_INFORMATION,
-    STARTF_USESTDHANDLES, STARTUPINFOW,
+    CreateProcessW, SetHandleInformation, CREATE_NEW_PROCESS_GROUP, CREATE_UNICODE_ENVIRONMENT,
+    HANDLE_FLAG_INHERIT, PROCESS_INFORMATION, STARTF_USESTDHANDLES, STARTUPINFOW,
 };
 
-/// Process information returned after successful launch
-pub struct ProcessInfo {
-    pub process_handle: HANDLE,
-    pub process_id: u32,
-}
-
-/// Handles that need to be closed after process launch
 pub struct ChildPipeHandles {
-    pub stdout_write: HANDLE,
-    pub stderr_write: HANDLE,
     pub stdin_read: HANDLE,
+    pub stdin_write: HANDLE,
+    pub stdout_read: HANDLE,
+    pub stdout_write: HANDLE,
+    pub stderr_read: HANDLE,
+    pub stderr_write: HANDLE,
 }
 
 impl ChildPipeHandles {
-    /// Close all handles (call this after CreateProcess)
     pub fn close_all(&mut self) {
         unsafe {
-            if !self.stdout_write.is_invalid() {
-                CloseHandle(self.stdout_write).ok();
-                self.stdout_write = HANDLE::default();
+            let handles = [
+                &mut self.stdin_read,
+                &mut self.stdin_write,
+                &mut self.stdout_read,
+                &mut self.stdout_write,
+                &mut self.stderr_read,
+                &mut self.stderr_write,
+            ];
+            for h in handles {
+                if !h.is_invalid() && h.0 != null_mut() {
+                    let _ = CloseHandle(*h);
+                    *h = HANDLE::default();
+                }
             }
-            if !self.stderr_write.is_invalid() {
-                CloseHandle(self.stderr_write).ok();
-                self.stderr_write = HANDLE::default();
+        }
+    }
+}
+
+impl Drop for ChildPipeHandles {
+    fn drop(&mut self) {
+        self.close_all();
+    }
+}
+
+pub struct LaunchedProcess {
+    pub process_handle: HANDLE,
+    pub thread_handle: HANDLE,
+    pub process_id: u32,
+    pub job_object: HANDLE,
+    pub stdout_read: HANDLE,
+    pub stderr_read: HANDLE,
+    pub stdin_write: HANDLE,
+}
+
+impl Drop for LaunchedProcess {
+    fn drop(&mut self) {
+        unsafe {
+            if !self.thread_handle.is_invalid() && self.thread_handle.0 != null_mut() {
+                let _ = CloseHandle(self.thread_handle);
             }
-            if !self.stdin_read.is_invalid() {
-                CloseHandle(self.stdin_read).ok();
-                self.stdin_read = HANDLE::default();
-            }
+            // Don't close process_handle or job_object here - they're managed by JobHandle
         }
     }
 }
@@ -45,233 +79,194 @@ impl ChildPipeHandles {
 pub struct ProcessLauncher;
 
 impl ProcessLauncher {
-    /// Launch a process with the given configuration
-    ///
-    /// # Arguments
-    /// * `payload` - Run configuration (command line, working dir, env vars)
-    /// * `stdout_write` - Write end of stdout pipe (will be inherited by child)
-    /// * `stderr_write` - Write end of stderr pipe (will be inherited by child)
-    /// * `stdin_read` - Read end of stdin pipe (will be inherited by child)
-    ///
-    /// # Returns
-    /// * `ProcessInfo` - Process handle and ID
-    ///
-    /// # Note
-    /// Caller must close stdout_write, stderr_write, stdin_read handles AFTER
-    /// this function returns successfully (child now owns them).
-    pub fn launch_process(
-        payload: &RunPayload,
-        stdout_write: HANDLE,
-        stderr_write: HANDLE,
-        stdin_read: HANDLE,
-    ) -> Result<ProcessInfo> {
-        // Validate command line length (Windows limit is 32767)
-        if payload.command_line.len() > 32_767 {
-            return Err(Error::ProcessLaunchFailed(format!(
-                "Command line too long: {} chars (max: 32767)",
-                payload.command_line.len()
-            )));
-        }
+    pub fn launch(
+        command_line: &str,
+        working_directory: Option<&str>,
+        environment: Option<&std::collections::HashMap<String, String>>,
+    ) -> Result<LaunchedProcess> {
+        let mut pipes = Self::create_pipes()?;
+        let job_object = Self::create_job_object()?;
 
-        // Validate command line is not empty
-        if payload.command_line.trim().is_empty() {
-            return Err(Error::ProcessLaunchFailed(
-                "Command line cannot be empty".to_string(),
-            ));
-        }
+        let result = Self::do_launch(command_line, working_directory, environment, &pipes);
 
-        // Validate working directory
-        let working_dir_wide: Option<Vec<u16>> = if let Some(ref cwd) = payload.working_directory {
-            let path = Path::new(cwd);
-            if !path.exists() {
-                return Err(Error::ProcessLaunchFailed(format!(
-                    "Working directory does not exist: {}",
-                    cwd
-                )));
+        match result {
+            Ok(mut proc) => {
+                // Assign to job object
+                unsafe {
+                    AssignProcessToJobObject(job_object, proc.process_handle)?;
+                }
+                proc.job_object = job_object;
+
+                // Close write ends, we only read from child
+                unsafe {
+                    if !pipes.stdout_write.is_invalid() {
+                        let _ = CloseHandle(pipes.stdout_write);
+                        pipes.stdout_write = HANDLE::default();
+                    }
+                    if !pipes.stderr_write.is_invalid() {
+                        let _ = CloseHandle(pipes.stderr_write);
+                        pipes.stderr_write = HANDLE::default();
+                    }
+                    if !pipes.stdin_read.is_invalid() {
+                        let _ = CloseHandle(pipes.stdin_read);
+                        pipes.stdin_read = HANDLE::default();
+                    }
+                }
+
+                proc.stdout_read = pipes.stdout_read;
+                proc.stderr_read = pipes.stderr_read;
+                proc.stdin_write = pipes.stdin_write;
+
+                // Clear to prevent Drop from closing them
+                pipes.stdout_read = HANDLE::default();
+                pipes.stderr_read = HANDLE::default();
+                pipes.stdin_write = HANDLE::default();
+
+                Ok(proc)
             }
-            if !path.is_dir() {
-                return Err(Error::ProcessLaunchFailed(format!(
-                    "Working directory is not a directory: {}",
-                    cwd
-                )));
+            Err(e) => {
+                unsafe {
+                    let _ = CloseHandle(job_object);
+                }
+                Err(e)
             }
-            Some(to_wide_null(cwd))
-        } else {
-            None
+        }
+    }
+
+    fn do_launch(
+        command_line: &str,
+        working_directory: Option<&str>,
+        environment: Option<&std::collections::HashMap<String, String>>,
+        pipes: &ChildPipeHandles,
+    ) -> Result<LaunchedProcess> {
+        let cmd_wide: Vec<u16> = OsStr::new(command_line)
+            .encode_wide()
+            .chain(once(0))
+            .collect();
+
+        let wd_wide: Option<Vec<u16>> = working_directory.map(|wd| {
+            OsStr::new(wd).encode_wide().chain(once(0)).collect()
+        });
+
+        let env_block: Option<Vec<u16>> = environment.map(|env| Self::build_env_block(env));
+
+        let mut startup_info = STARTUPINFOW {
+            cb: std::mem::size_of::<STARTUPINFOW>() as u32,
+            dwFlags: STARTF_USESTDHANDLES,
+            hStdInput: pipes.stdin_read,
+            hStdOutput: pipes.stdout_write,
+            hStdError: pipes.stderr_write,
+            ..Default::default()
         };
 
-        // Build environment block
-        let env_block = Self::build_environment_block(payload.environment.as_ref())?;
-
-        // Prepare STARTUPINFO with stdio handles
-        let mut startup_info = STARTUPINFOW::default();
-        startup_info.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
-        startup_info.dwFlags = STARTF_USESTDHANDLES;
-        startup_info.hStdInput = stdin_read;
-        startup_info.hStdOutput = stdout_write;
-        startup_info.hStdError = stderr_write;
-
-        // Prepare PROCESS_INFORMATION
         let mut process_info = PROCESS_INFORMATION::default();
 
-        // Convert command line to wide string (mutable for CreateProcessW)
-        let mut cmd_line_wide = to_wide_null(&payload.command_line);
-
-        // Working directory pointer
-        let cwd_ptr = working_dir_wide
-            .as_ref()
-            .map(|v| v.as_ptr())
-            .unwrap_or(std::ptr::null());
-
-        // Environment block pointer
-        let env_ptr = env_block
-            .as_ref()
-            .map(|b| b.as_ptr() as *const std::ffi::c_void)
-            .unwrap_or(std::ptr::null());
-
-        // Launch process
-        let creation_flags = CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT;
+        let creation_flags = CREATE_NEW_PROCESS_GROUP | CREATE_UNICODE_ENVIRONMENT;
 
         unsafe {
-            let success = CreateProcessW(
-                None, // Application name (use command line instead)
-                windows::core::PWSTR::from_raw(cmd_line_wide.as_mut_ptr()),
-                None,             // Process security attributes
-                None,             // Thread security attributes
-                BOOL::from(true), // Inherit handles
+            CreateProcessW(
+                None,
+                PCWSTR::from_raw(cmd_wide.as_ptr()),
+                None,
+                None,
+                true,
                 creation_flags,
-                Some(env_ptr),
-                windows::core::PCWSTR::from_raw(cwd_ptr),
-                &startup_info,
+                env_block
+                    .as_ref()
+                    .map(|b| b.as_ptr() as *const std::ffi::c_void),
+                wd_wide.as_ref().map(|w| PCWSTR::from_raw(w.as_ptr())),
+                &mut startup_info,
                 &mut process_info,
-            );
-
-            if success.as_bool() {
-                // Close thread handle immediately (not needed)
-                CloseHandle(process_info.hThread).ok();
-
-                tracing::debug!(
-                    pid = process_info.dwProcessId,
-                    "Process launched successfully"
-                );
-
-                Ok(ProcessInfo {
-                    process_handle: process_info.hProcess,
-                    process_id: process_info.dwProcessId,
-                })
-            } else {
-                let err = windows::core::Error::from_win32();
-                Err(Error::ProcessLaunchFailed(format!(
-                    "CreateProcess failed: {} (command: {})",
-                    err, payload.command_line
-                )))
-            }
+            )
+            .map_err(|e| Error::ProcessLaunchFailed(format!("CreateProcessW: {}", e)))?;
         }
+
+        Ok(LaunchedProcess {
+            process_handle: process_info.hProcess,
+            thread_handle: process_info.hThread,
+            process_id: process_info.dwProcessId,
+            job_object: HANDLE::default(),
+            stdout_read: HANDLE::default(),
+            stderr_read: HANDLE::default(),
+            stdin_write: HANDLE::default(),
+        })
     }
 
-    fn build_environment_block(
-        env_vars: Option<&std::collections::HashMap<String, String>>,
-    ) -> Result<Option<Vec<u16>>> {
-        let env_vars = match env_vars {
-            Some(vars) if !vars.is_empty() => vars,
-            _ => return Ok(None),
-        };
-
-        // Validate total size (Windows limit ~32KB typically)
-        let total_size: usize = env_vars
-            .iter()
-            .map(|(k, v)| k.len() + v.len() + 2) // +2 for '=' and null terminator
-            .sum();
-        if total_size > 32_767 {
-            return Err(Error::ProcessLaunchFailed(format!(
-                "Environment block too large: {} chars (max: 32767)",
-                total_size
-            )));
-        }
-
-        // Build environment block: KEY=VALUE\0KEY=VALUE\0\0
-        let mut block = Vec::new();
-        for (key, value) in env_vars {
-            // Validate key (no = or null characters)
-            if key.contains('=') || key.contains('\0') {
-                return Err(Error::ProcessLaunchFailed(format!(
-                    "Invalid environment variable name: {} (contains = or null)",
-                    key
-                )));
-            }
-            if key.is_empty() {
-                return Err(Error::ProcessLaunchFailed(
-                    "Environment variable name cannot be empty".to_string(),
-                ));
-            }
-            // Validate value (no null characters)
-            if value.contains('\0') {
-                return Err(Error::ProcessLaunchFailed(format!(
-                    "Invalid environment variable value for {}: contains null character",
-                    key
-                )));
-            }
-
-            // Convert to wide string
-            let entry = format!("{}={}", key, value);
-            let wide: Vec<u16> = OsStr::new(&entry).encode_wide().chain(Some(0)).collect();
-            block.extend_from_slice(&wide);
-        }
-        block.push(0); // Double null terminator
-
-        Ok(Some(block))
-    }
-
-    /// Create a Windows Job Object for process tree management
-    pub fn create_job_object() -> Result<HANDLE> {
-        use windows::Win32::System::JobObjects::{
-            CreateJobObjectW, JobObjectExtendedLimitInformation, SetInformationJobObject,
-            JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-        };
-
+    fn create_pipes() -> Result<ChildPipeHandles> {
         unsafe {
-            let job_handle = CreateJobObjectW(None, None)?;
+            let mut sa = SECURITY_ATTRIBUTES {
+                nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+                bInheritHandle: true.into(),
+                lpSecurityDescriptor: null_mut(),
+            };
 
-            // Configure job object to kill all processes on close
+            let mut stdin_read = HANDLE::default();
+            let mut stdin_write = HANDLE::default();
+            let mut stdout_read = HANDLE::default();
+            let mut stdout_write = HANDLE::default();
+            let mut stderr_read = HANDLE::default();
+            let mut stderr_write = HANDLE::default();
+
+            CreatePipe(&mut stdin_read, &mut stdin_write, Some(&sa), 0)
+                .map_err(|e| Error::ProcessLaunchFailed(format!("CreatePipe stdin: {}", e)))?;
+
+            CreatePipe(&mut stdout_read, &mut stdout_write, Some(&sa), 0)
+                .map_err(|e| Error::ProcessLaunchFailed(format!("CreatePipe stdout: {}", e)))?;
+
+            CreatePipe(&mut stderr_read, &mut stderr_write, Some(&sa), 0)
+                .map_err(|e| Error::ProcessLaunchFailed(format!("CreatePipe stderr: {}", e)))?;
+
+            // Make parent ends non-inheritable
+            let _ = SetHandleInformation(stdin_write, 1, HANDLE_FLAG_INHERIT);
+            let _ = SetHandleInformation(stdout_read, 1, HANDLE_FLAG_INHERIT);
+            let _ = SetHandleInformation(stderr_read, 1, HANDLE_FLAG_INHERIT);
+
+            Ok(ChildPipeHandles {
+                stdin_read,
+                stdin_write,
+                stdout_read,
+                stdout_write,
+                stderr_read,
+                stderr_write,
+            })
+        }
+    }
+
+    fn create_job_object() -> Result<HANDLE> {
+        unsafe {
+            let job = CreateJobObjectW(None, None)
+                .map_err(|e| Error::ProcessLaunchFailed(format!("CreateJobObjectW: {}", e)))?;
+
             let mut limit_info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
             limit_info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
 
             SetInformationJobObject(
-                job_handle,
+                job,
                 JobObjectExtendedLimitInformation,
                 &limit_info as *const _ as *const std::ffi::c_void,
                 std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-            )?;
+            )
+            .map_err(|e| Error::ProcessLaunchFailed(format!("SetInformationJobObject: {}", e)))?;
 
-            tracing::debug!("Job object created");
-            Ok(job_handle)
+            Ok(job)
         }
     }
 
-    /// Assign a process to a job object
-    pub fn assign_process_to_job(job_handle: HANDLE, process_handle: HANDLE) -> Result<()> {
-        use windows::Win32::System::JobObjects::AssignProcessToJobObject;
-
+    pub fn terminate_job_object(job: HANDLE, exit_code: u32) -> Result<()> {
         unsafe {
-            AssignProcessToJobObject(job_handle, process_handle).map_err(|e| {
-                Error::ProcessLaunchFailed(format!("AssignProcessToJobObject failed: {}", e))
-            })
+            TerminateJobObject(job, exit_code)
+                .map_err(|e| Error::ProcessLaunchFailed(format!("TerminateJobObject: {}", e)))
         }
     }
 
-    /// Terminate all processes in a job object
-    pub fn terminate_job_object(job_handle: HANDLE, exit_code: u32) -> Result<()> {
-        use windows::Win32::System::JobObjects::TerminateJobObject;
-
-        unsafe {
-            TerminateJobObject(job_handle, exit_code).map_err(|e| {
-                Error::ProcessLaunchFailed(format!("TerminateJobObject failed: {}", e))
-            })
+    fn build_env_block(env: &std::collections::HashMap<String, String>) -> Vec<u16> {
+        let mut block: Vec<u16> = Vec::new();
+        for (k, v) in env {
+            let entry = format!("{}={}", k, v);
+            block.extend(OsStr::new(&entry).encode_wide());
+            block.push(0);
         }
+        block.push(0);
+        block
     }
-}
-
-/// Convert a string to null-terminated wide string (UTF-16)
-fn to_wide_null(s: &str) -> Vec<u16> {
-    OsStr::new(s).encode_wide().chain(Some(0)).collect()
 }
