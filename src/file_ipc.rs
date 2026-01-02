@@ -1,5 +1,5 @@
 //! File-based IPC for remote command execution.
-//! 
+//!
 //! This module monitors a request directory for JSON request files and
 //! writes responses to a response directory. This provides a simpler
 //! IPC mechanism that works reliably over SMB.
@@ -86,9 +86,12 @@ impl FileIpcServer {
         Ok(())
     }
 
-    async fn process_requests(&self, semaphore: &std::sync::Arc<tokio::sync::Semaphore>) -> Result<()> {
+    async fn process_requests(
+        &self,
+        semaphore: &std::sync::Arc<tokio::sync::Semaphore>,
+    ) -> Result<()> {
         let request_dir = Path::new(REQUEST_DIR);
-        
+
         if !request_dir.exists() {
             return Ok(());
         }
@@ -103,7 +106,7 @@ impl FileIpcServer {
 
         while let Ok(Some(entry)) = entries.next_entry().await {
             let path = entry.path();
-            
+
             // Only process .json files
             if path.extension().map_or(false, |ext| ext == "json") {
                 // Acquire semaphore permit
@@ -136,16 +139,13 @@ async fn ensure_directories() -> Result<()> {
     let response_dir = Path::new(RESPONSE_DIR);
 
     if !base.exists() {
-        fs::create_dir_all(base).await
-            .map_err(Error::Io)?;
+        fs::create_dir_all(base).await.map_err(Error::Io)?;
     }
     if !request_dir.exists() {
-        fs::create_dir_all(request_dir).await
-            .map_err(Error::Io)?;
+        fs::create_dir_all(request_dir).await.map_err(Error::Io)?;
     }
     if !response_dir.exists() {
-        fs::create_dir_all(response_dir).await
-            .map_err(Error::Io)?;
+        fs::create_dir_all(response_dir).await.map_err(Error::Io)?;
     }
 
     tracing::debug!("IPC directories ready");
@@ -162,11 +162,9 @@ async fn process_single_request(request_path: &Path) -> Result<()> {
     tracing::info!(request_id = %request_id, "Processing request");
 
     // Read request file
-    let mut file = fs::File::open(request_path).await
-        .map_err(Error::Io)?;
+    let mut file = fs::File::open(request_path).await.map_err(Error::Io)?;
     let mut content = String::new();
-    file.read_to_string(&mut content).await
-        .map_err(Error::Io)?;
+    file.read_to_string(&mut content).await.map_err(Error::Io)?;
     drop(file);
 
     // Delete request file immediately to prevent re-processing
@@ -208,24 +206,24 @@ async fn execute_command(request: &Request) -> Response {
     // Build command - use cmd.exe for shell command execution
     let mut cmd = Command::new("cmd.exe");
     cmd.args(["/C", &request.command]);
-    
+
     // Set working directory
     if let Some(ref wd) = request.working_dir {
         cmd.current_dir(wd);
     }
-    
+
     // Set environment variables
     if let Some(ref env) = request.environment {
         for (key, value) in env {
             cmd.env(key, value);
         }
     }
-    
+
     // Capture output
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
     cmd.stdin(Stdio::null());
-    
+
     // Spawn child
     let child = match cmd.spawn() {
         Ok(child) => child,
@@ -239,10 +237,10 @@ async fn execute_command(request: &Request) -> Response {
             };
         }
     };
-    
+
     // Wait with timeout
     let output_result = tokio::time::timeout(timeout, child.wait_with_output()).await;
-    
+
     let (exit_code, stdout, stderr, error) = match output_result {
         Ok(Ok(output)) => {
             let exit_code = output.status.code().unwrap_or(-1);
@@ -250,13 +248,21 @@ async fn execute_command(request: &Request) -> Response {
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
             (exit_code, stdout, stderr, None)
         }
-        Ok(Err(e)) => {
-            (-1, String::new(), String::new(), Some(format!("Process error: {}", e)))
-        }
+        Ok(Err(e)) => (
+            -1,
+            String::new(),
+            String::new(),
+            Some(format!("Process error: {}", e)),
+        ),
         Err(_) => {
             // Timeout
             tracing::warn!(request_id = %request.id, "Process timed out after {:?}", timeout);
-            (-1, String::new(), String::new(), Some(format!("Command timed out after {:?}", timeout)))
+            (
+                -1,
+                String::new(),
+                String::new(),
+                Some(format!("Command timed out after {:?}", timeout)),
+            )
         }
     };
 
@@ -278,17 +284,14 @@ async fn execute_command(request: &Request) -> Response {
 
 async fn write_response(response: &Response) -> Result<()> {
     let response_path = PathBuf::from(RESPONSE_DIR).join(format!("{}.json", response.id));
-    
+
     let json = serde_json::to_string_pretty(response)
         .map_err(|e| Error::Protocol(format!("JSON serialize: {}", e)))?;
-    
-    let mut file = fs::File::create(&response_path).await
-        .map_err(Error::Io)?;
-    file.write_all(json.as_bytes()).await
-        .map_err(Error::Io)?;
-    file.flush().await
-        .map_err(Error::Io)?;
-    
+
+    let mut file = fs::File::create(&response_path).await.map_err(Error::Io)?;
+    file.write_all(json.as_bytes()).await.map_err(Error::Io)?;
+    file.flush().await.map_err(Error::Io)?;
+
     tracing::debug!(path = %response_path.display(), "Response written");
     Ok(())
 }
