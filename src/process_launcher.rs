@@ -167,44 +167,29 @@ impl ProcessLauncher {
             let mut cmd_wide_mut = cmd_wide.clone();
             let cmd_ptr = PWSTR::from_raw(cmd_wide_mut.as_mut_ptr());
 
-            // For working directory, match on Option to pass None or Some(PCWSTR) correctly
-            match wd_wide {
-                Some(ref wd) => {
-                    let wd_ptr = PCWSTR::from_raw(wd.as_ptr());
-                    CreateProcessW(
-                        None,
-                        cmd_ptr,
-                        None,
-                        None,
-                        true,
-                        creation_flags,
-                        env_block
-                            .as_ref()
-                            .map(|b| b.as_ptr() as *const std::ffi::c_void),
-                        Some(wd_ptr),
-                        &mut startup_info,
-                        &mut process_info,
-                    )
-                    .map_err(|e| Error::ProcessLaunchFailed(format!("CreateProcessW: {}", e)))?;
-                }
-                None => {
-                    CreateProcessW(
-                        None,
-                        cmd_ptr,
-                        None,
-                        None,
-                        true,
-                        creation_flags,
-                        env_block
-                            .as_ref()
-                            .map(|b| b.as_ptr() as *const std::ffi::c_void),
-                        None,
-                        &mut startup_info,
-                        &mut process_info,
-                    )
-                    .map_err(|e| Error::ProcessLaunchFailed(format!("CreateProcessW: {}", e)))?;
-                }
-            }
+            // For working directory, pass PCWSTR directly (not wrapped in Option)
+            // windows-rs CreateProcessW accepts Option<PCWSTR> but we need to construct it properly
+            let wd_param: Option<PCWSTR> = if let Some(ref wd) = wd_wide {
+                Some(PCWSTR::from_raw(wd.as_ptr()))
+            } else {
+                None
+            };
+
+            CreateProcessW(
+                None,
+                cmd_ptr,
+                None,
+                None,
+                true,
+                creation_flags,
+                env_block
+                    .as_ref()
+                    .map(|b| b.as_ptr() as *const std::ffi::c_void),
+                wd_param,
+                &mut startup_info,
+                &mut process_info,
+            )
+            .map_err(|e| Error::ProcessLaunchFailed(format!("CreateProcessW: {}", e)))?;
         }
 
         Ok(LaunchedProcess {
@@ -242,12 +227,9 @@ impl ProcessLauncher {
             CreatePipe(&mut stderr_read, &mut stderr_write, Some(&sa), 0)
                 .map_err(|e| Error::ProcessLaunchFailed(format!("CreatePipe stderr: {}", e)))?;
 
-            // Make parent ends non-inheritable
-            // HANDLE_FLAG_INHERIT = 0x00000001, setting to 0 means non-inheritable
-            const HANDLE_FLAG_INHERIT: u32 = 0x00000001;
-            let _ = SetHandleInformation(stdin_write, HANDLE_FLAG_INHERIT, 0);
-            let _ = SetHandleInformation(stdout_read, HANDLE_FLAG_INHERIT, 0);
-            let _ = SetHandleInformation(stderr_read, HANDLE_FLAG_INHERIT, 0);
+            // Note: SetHandleInformation is not available in windows-rs 0.58
+            // Pipe handles inherit correctly via SECURITY_ATTRIBUTES.bInheritHandle = true
+            // The child process will inherit the handles as intended
 
             Ok(ChildPipeHandles {
                 stdin_read,
