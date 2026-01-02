@@ -167,29 +167,45 @@ impl ProcessLauncher {
             let mut cmd_wide_mut = cmd_wide.clone();
             let cmd_ptr = PWSTR::from_raw(cmd_wide_mut.as_mut_ptr());
 
-            // For working directory, pass PCWSTR directly (not wrapped in Option)
-            // windows-rs CreateProcessW accepts Option<PCWSTR> but we need to construct it properly
-            let wd_param: Option<PCWSTR> = if let Some(ref wd) = wd_wide {
-                Some(PCWSTR::from_raw(wd.as_ptr()))
-            } else {
-                None
-            };
-
-            CreateProcessW(
-                None,
-                cmd_ptr,
-                None,
-                None,
-                true,
-                creation_flags,
-                env_block
-                    .as_ref()
-                    .map(|b| b.as_ptr() as *const std::ffi::c_void),
-                wd_param,
-                &mut startup_info,
-                &mut process_info,
-            )
-            .map_err(|e| Error::ProcessLaunchFailed(format!("CreateProcessW: {}", e)))?;
+            // For working directory, use match to handle None vs Some properly
+            // windows-rs requires explicit handling of Option parameters
+            match wd_wide {
+                Some(ref wd) => {
+                    let wd_ptr = PCWSTR::from_raw(wd.as_ptr());
+                    CreateProcessW(
+                        None,
+                        cmd_ptr,
+                        None,
+                        None,
+                        true,
+                        creation_flags,
+                        env_block
+                            .as_ref()
+                            .map(|b| b.as_ptr() as *const std::ffi::c_void),
+                        wd_ptr, // Pass PCWSTR directly, not wrapped in Option
+                        &mut startup_info,
+                        &mut process_info,
+                    )
+                    .map_err(|e| Error::ProcessLaunchFailed(format!("CreateProcessW: {}", e)))?;
+                }
+                None => {
+                    CreateProcessW(
+                        None,
+                        cmd_ptr,
+                        None,
+                        None,
+                        true,
+                        creation_flags,
+                        env_block
+                            .as_ref()
+                            .map(|b| b.as_ptr() as *const std::ffi::c_void),
+                        PCWSTR::null(), // Use null PCWSTR instead of None
+                        &mut startup_info,
+                        &mut process_info,
+                    )
+                    .map_err(|e| Error::ProcessLaunchFailed(format!("CreateProcessW: {}", e)))?;
+                }
+            }
         }
 
         Ok(LaunchedProcess {
