@@ -18,7 +18,6 @@ use windows::Win32::System::Threading::{
     CreateProcessW, CREATE_NEW_PROCESS_GROUP, CREATE_UNICODE_ENVIRONMENT, PROCESS_INFORMATION,
     STARTF_USESTDHANDLES, STARTUPINFOW,
 };
-use windows::Win32::System::IO::SetHandleInformation;
 
 pub struct ChildPipeHandles {
     pub stdin_read: HANDLE,
