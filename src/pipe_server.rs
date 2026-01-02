@@ -24,7 +24,6 @@ use windows::Win32::System::Pipes::{
 
 const PIPE_NAME: &str = r"\\.\pipe\VirimaRemoteAgent";
 const PIPE_BUFFER_SIZE: u32 = 65536;
-const MAX_CONCURRENT_CONNECTIONS: usize = 100;
 
 pub struct PipeServer {
     job_manager: Arc<JobManager>,

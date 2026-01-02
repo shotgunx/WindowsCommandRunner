@@ -147,7 +147,7 @@ impl ProcessLauncher {
 
         let env_block: Option<Vec<u16>> = environment.map(Self::build_env_block);
 
-        let mut startup_info = STARTUPINFOW {
+        let startup_info = STARTUPINFOW {
             cb: std::mem::size_of::<STARTUPINFOW>() as u32,
             dwFlags: STARTF_USESTDHANDLES,
             hStdInput: pipes.stdin_read,

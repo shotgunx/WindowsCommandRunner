@@ -2,7 +2,9 @@ use crate::error::Result;
 use std::collections::HashMap;
 
 pub struct Logger {
+    #[allow(dead_code)]
     event_log_source: String,
+    #[allow(dead_code)]
     file_log_path: Option<String>,
 }
 
