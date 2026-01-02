@@ -55,6 +55,8 @@ pub struct JobHandle {
     pub cancellation_token: tokio_util::sync::CancellationToken,
     pub start_time: SystemTime,
     pub timeout: Option<Duration>,
+    pub completed_at: Mutex<Option<SystemTime>>,
+    pub last_activity: Mutex<SystemTime>,
 }
 
 impl Drop for JobHandle {
@@ -161,14 +163,17 @@ impl JobManager {
             return Err(Error::JobExists(job_id));
         }
 
+        let now = SystemTime::now();
         let handle = Arc::new(JobHandle {
             job_id,
             state: Mutex::new(JobState::Created),
             process_handle: SafeHandle::default(),
             job_object: SafeHandle::default(),
             cancellation_token: tokio_util::sync::CancellationToken::new(),
-            start_time: SystemTime::now(),
+            start_time: now,
             timeout,
+            completed_at: Mutex::new(None),
+            last_activity: Mutex::new(now),
         });
 
         self.jobs.insert(job_id, handle.clone());
@@ -195,6 +200,14 @@ impl JobManager {
 
         tracing::debug!(job_id, from = %old_state, to = %new_state, "Job state transition");
         *state_guard = new_state;
+
+        // Update last_activity and completed_at timestamps
+        let now = SystemTime::now();
+        *job.last_activity.lock().unwrap() = now;
+        if new_state.is_terminal() {
+            *job.completed_at.lock().unwrap() = Some(now);
+        }
+
         drop(state_guard);
 
         Ok(old_state)
@@ -246,5 +259,85 @@ impl JobManager {
 
     pub fn job_count(&self) -> usize {
         self.jobs.len()
+    }
+
+    /// Clean up jobs that have been in terminal states for longer than the specified duration
+    pub fn cleanup_idle_jobs(&self, idle_duration: Duration) -> usize {
+        let now = SystemTime::now();
+        let mut cleaned = 0;
+        let mut to_remove = Vec::new();
+
+        for entry in self.jobs.iter() {
+            let job_id = *entry.key();
+            let job = entry.value();
+
+            let should_cleanup = {
+                let state = job.state.lock().unwrap();
+                let completed_at = job.completed_at.lock().unwrap();
+                let last_activity = job.last_activity.lock().unwrap();
+
+                if state.is_terminal() {
+                    // Job is in terminal state - check if it's been idle long enough
+                    if let Some(completed_time) = *completed_at {
+                        if let Ok(elapsed) = now.duration_since(completed_time) {
+                            if elapsed >= idle_duration {
+                                tracing::debug!(
+                                    job_id,
+                                    elapsed_secs = elapsed.as_secs(),
+                                    "Cleaning up idle completed job"
+                                );
+                                true
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    }
+                } else {
+                    // Job is still active - check last activity time
+                    if let Ok(elapsed) = now.duration_since(*last_activity) {
+                        if elapsed >= idle_duration {
+                            tracing::debug!(
+                                job_id,
+                                elapsed_secs = elapsed.as_secs(),
+                                state = %state,
+                                "Cleaning up idle active job"
+                            );
+                            true
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    }
+                }
+            };
+
+            if should_cleanup {
+                to_remove.push(job_id);
+            }
+        }
+
+        for job_id in to_remove {
+            if self.cleanup_job(job_id).is_ok() {
+                cleaned += 1;
+            }
+        }
+
+        if cleaned > 0 {
+            tracing::info!(cleaned, "Cleaned up idle jobs");
+        }
+
+        cleaned
+    }
+
+    /// Update the last activity timestamp for a job
+    pub fn update_activity(&self, job_id: u32) {
+        if let Some(job) = self.get_job(job_id) {
+            *job.last_activity.lock().unwrap() = SystemTime::now();
+        }
     }
 }

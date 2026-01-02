@@ -195,19 +195,26 @@ impl PipeServer {
                 }
                 FrameType::Cancel => {
                     let job_id = frame.job_id;
+                    self.job_manager.update_activity(job_id);
                     if let Err(e) = self.job_manager.cancel_job(job_id, "Client requested") {
                         tracing::warn!(job_id, error = %e, "Cancel failed");
                     }
                 }
                 FrameType::WindowUpdate => {
-                    // Handle flow control
-                    tracing::debug!(job_id = frame.job_id, "Window update received");
+                    // Handle flow control - update activity for the job
+                    let job_id = frame.job_id;
+                    self.job_manager.update_activity(job_id);
+                    tracing::debug!(job_id, "Window update received");
                 }
                 FrameType::Goodbye => {
                     tracing::info!("Client sent GOODBYE");
                     break;
                 }
                 _ => {
+                    // Update activity for any frame related to a job
+                    if frame.job_id != 0 {
+                        self.job_manager.update_activity(frame.job_id);
+                    }
                     tracing::warn!(frame_type = ?frame.frame_type, "Unexpected frame");
                 }
             }
@@ -246,6 +253,7 @@ impl PipeServer {
 
                 self.job_manager
                     .transition_state(job_id, JobState::Running)?;
+                self.job_manager.update_activity(job_id);
 
                 let pump = Arc::new(StreamPump::new(65536, false));
 
@@ -306,6 +314,7 @@ impl PipeServer {
                     .unwrap_or(-1);
 
                     let _ = mgr_clone.transition_state(job_id, JobState::Exiting);
+                    mgr_clone.update_activity(job_id);
 
                     let exit_payload = ExitPayload { exit_code };
                     let exit_frame = Frame::new(FrameType::Exit, StreamId::Control)
@@ -314,7 +323,7 @@ impl PipeServer {
 
                     let _ = tx_exit.send(exit_frame).await;
                     let _ = mgr_clone.transition_state(job_id, JobState::Completed);
-                    let _ = mgr_clone.cleanup_job(job_id);
+                    // Don't immediately cleanup - let the idle cleanup task handle it after 10 seconds
                 });
             }
             Err(e) => {

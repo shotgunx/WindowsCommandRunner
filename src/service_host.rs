@@ -10,6 +10,8 @@ use tokio::sync::watch;
 const SERVICE_NAME: &str = "VirimaRemoteAgent";
 const MAX_CONCURRENT_JOBS: usize = 50;
 const MAX_CONNECTIONS: usize = 100;
+const IDLE_CLEANUP_INTERVAL: Duration = Duration::from_secs(5); // Check every 5 seconds
+const IDLE_CLEANUP_THRESHOLD: Duration = Duration::from_secs(10); // Clean up after 10 seconds idle
 
 pub struct ServiceHost {
     shutdown_tx: watch::Sender<bool>,
@@ -41,6 +43,28 @@ impl ServiceHost {
             })
         };
 
+        // Spawn idle job cleanup task
+        let cleanup_handle = {
+            let job_manager = job_manager.clone();
+            let mut shutdown_rx = self.shutdown_rx.clone();
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(IDLE_CLEANUP_INTERVAL);
+                interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+                loop {
+                    tokio::select! {
+                        _ = interval.tick() => {
+                            job_manager.cleanup_idle_jobs(IDLE_CLEANUP_THRESHOLD);
+                        }
+                        _ = shutdown_rx.changed() => {
+                            tracing::debug!("Cleanup task shutting down");
+                            break;
+                        }
+                    }
+                }
+            })
+        };
+
         // Wait for shutdown signal
         let mut shutdown_rx = self.shutdown_rx.clone();
         tokio::select! {
@@ -59,6 +83,7 @@ impl ServiceHost {
         // Wait briefly for pending operations
         tokio::time::sleep(Duration::from_secs(2)).await;
 
+        cleanup_handle.abort();
         server_handle.abort();
         tracing::info!("Service stopped");
         Ok(())

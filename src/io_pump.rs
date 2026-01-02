@@ -156,6 +156,7 @@ pub async fn start_output_pump(
 
                 sequence = sequence.wrapping_add(1);
                 pump.try_send_frame(&frame_sender, frame).await?;
+                // Note: Activity is updated when frames are processed in pipe_server
             }
             Err(e) => {
                 tracing::error!(job_id, ?stream_id, error = %e, "Pipe read error");
