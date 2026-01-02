@@ -264,8 +264,12 @@ Log levels: ERROR, WARN, INFO, DEBUG, TRACE
 ### Client connection fails
 
 - Verify client is running as Administrator
-- Check firewall settings (named pipes use SMB)
+- **Local named pipes** (`\\.\pipe\...`) typically **don't require firewall rules** - they use local IPC
+- **Remote named pipes** (e.g., `\\server\pipe\...`) may require SMB firewall rules:
+  - Windows Firewall usually allows SMB by default (ports 445, 139)
+  - If blocked, enable "File and Printer Sharing" firewall rule
 - Verify pipe name matches client configuration
+- Check if service is running: `sc.exe query VirimaRemoteAgent`
 
 ### Process launch fails
 
