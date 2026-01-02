@@ -57,13 +57,16 @@ cargo test
 
 ### Configuration
 
-The service uses the following defaults (configurable via environment variables or config file):
+The service uses the following defaults (hardcoded constants):
 
-- Pipe name: `\\.\pipe\VirimaRemoteAgent`
-- Max concurrent clients: 64
-- Max concurrent jobs: 32
-- Graceful shutdown timeout: 30 seconds
-- Default job timeout: 3600 seconds (1 hour)
+- **Pipe name**: `\\.\pipe\VirimaRemoteAgent`
+- **Max concurrent clients**: 100
+- **Max concurrent jobs**: 50
+- **Idle cleanup**: Jobs cleaned up after 30 minutes of inactivity
+- **Quiet cleanup**: All completed jobs cleaned up if system is idle for 2 minutes
+- **Cleanup interval**: Checks every 30 seconds
+
+**Note**: These are currently hardcoded in `src/service_host.rs` and `src/pipe_server.rs`. Future versions may support configuration via environment variables or config file.
 
 ## Protocol
 
@@ -93,18 +96,147 @@ The service uses a binary frame-based protocol over named pipes. See [ARCHITECTU
 - `CANCEL` (0x50): Cancel job
 - `ERROR` (0xF0): Error frame
 
-## Usage Example
+## Usage
 
-The service listens on `\\.\pipe\VirimaRemoteAgent` and accepts connections from administrators.
+### Running the Executable
 
-A Java client would:
-1. Connect to the named pipe
-2. Send `HELLO` frame
-3. Receive `HELLO_ACK`
-4. Send `RUN` frame with command details
-5. Receive `RUN_ACK` with job_id
-6. Receive `OUTPUT` frames for stdout/stderr
-7. Receive `EXIT` frame with exit code
+#### Console Mode (Testing/Development)
+
+Run directly from command line for testing:
+
+```powershell
+# Run in console mode (logs to stdout)
+.\target\release\virima-remote-agent.exe
+
+# Or with explicit flag
+.\target\release\virima-remote-agent.exe --console
+```
+
+**Console Mode Features:**
+- Logs output to console/stdout
+- Press `Ctrl+C` to stop
+- Useful for debugging and development
+- No Windows Service installation required
+
+#### Windows Service Mode
+
+Install and run as a Windows Service:
+
+```powershell
+# 1. Install the service (requires Administrator)
+sc.exe create VirimaRemoteAgent binPath="C:\path\to\virima-remote-agent.exe --service" start=auto
+
+# 2. Start the service
+sc.exe start VirimaRemoteAgent
+
+# 3. Check status
+sc.exe query VirimaRemoteAgent
+
+# 4. View logs
+Get-EventLog -LogName Application -Source VirimaRemoteAgent -Newest 50
+
+# 5. Stop the service
+sc.exe stop VirimaRemoteAgent
+
+# 6. Uninstall the service
+sc.exe delete VirimaRemoteAgent
+```
+
+**Service Mode Features:**
+- Runs in background as Windows Service
+- Auto-starts on boot (if configured)
+- Logs to Windows Event Log
+- Managed via Service Control Manager (SCM)
+
+### Client Connection
+
+The service listens on named pipe: `\\.\pipe\VirimaRemoteAgent`
+
+**Connection Requirements:**
+- Client must run as Administrator (or SYSTEM)
+- Client must have network access to the server (named pipes use SMB)
+- Protocol version must match (currently version 1)
+
+### Protocol Flow
+
+A client connects and executes commands as follows:
+
+1. **Connect** to named pipe `\\.\pipe\VirimaRemoteAgent`
+2. **Send HELLO frame** with protocol version:
+   ```json
+   {
+     "version": 1,
+     "client_id": "optional-client-id"
+   }
+   ```
+3. **Receive HELLO_ACK** confirming protocol version
+4. **Send RUN frame** with command:
+   ```json
+   {
+     "command": "powershell.exe -Command Write-Host 'Hello World'",
+     "working_directory": "C:\\Users\\Administrator",
+     "environment": {"VAR1": "value1"},
+     "timeout_ms": 30000
+   }
+   ```
+5. **Receive RUN_ACK** with `job_id`
+6. **Receive OUTPUT frames** for stdout/stderr (stream_id: 1=stdout, 2=stderr)
+7. **Receive EXIT frame** with exit code when process completes:
+   ```json
+   {
+     "exit_code": 0
+   }
+   ```
+
+### Example: Simple Test Client (PowerShell)
+
+```powershell
+# Connect to named pipe and send a simple command
+$pipe = New-Object System.IO.Pipes.NamedPipeClientStream(
+    ".", 
+    "VirimaRemoteAgent", 
+    [System.IO.Pipes.PipeDirection]::InOut,
+    [System.IO.Pipes.PipeOptions]::None,
+    [System.Security.Principal.TokenImpersonationLevel]::Impersonation
+)
+
+$pipe.Connect(5000)
+
+# Send HELLO frame (simplified - actual protocol is binary)
+# ... implement frame encoding ...
+
+$pipe.Close()
+```
+
+### Example: Java Client (Pseudo-code)
+
+```java
+// Connect to named pipe
+NamedPipeClientStream pipe = new NamedPipeClientStream(
+    ".", 
+    "VirimaRemoteAgent", 
+    PipeDirection.InOut
+);
+pipe.Connect();
+
+// Send HELLO frame
+HelloPayload hello = new HelloPayload(1, "java-client");
+Frame helloFrame = Frame.hello(hello);
+pipe.write(helloFrame.encode());
+
+// Read HELLO_ACK
+Frame ack = Frame.decode(pipe.read());
+
+// Send RUN frame
+RunPayload run = new RunPayload();
+run.command = "cmd.exe /c echo Hello World";
+run.timeout_ms = 30000L;
+Frame runFrame = Frame.run(run);
+pipe.write(runFrame.encode());
+
+// Read RUN_ACK, OUTPUT frames, and EXIT frame
+// ... handle streaming output ...
+```
 
 ## Security
 
