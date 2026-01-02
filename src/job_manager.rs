@@ -264,10 +264,50 @@ impl JobManager {
         self.jobs.len()
     }
 
-    /// Clean up jobs that have been in terminal states for longer than the specified duration
-    pub fn cleanup_idle_jobs(&self, idle_duration: Duration) -> usize {
+    /// Clean up jobs that have been idle for longer than the specified duration
+    /// Also cleans up all completed jobs if all jobs are terminal and no new job for quiet_duration
+    pub fn cleanup_idle_jobs(&self, idle_duration: Duration, quiet_duration: Duration) -> usize {
         let now = SystemTime::now();
         let mut cleaned = 0;
+
+        // Check if all jobs are terminal and no new job for quiet_duration
+        {
+            let last_job_time = *self.last_job_created.lock().unwrap();
+            let mut all_terminal = true;
+            let mut has_jobs = false;
+
+            for entry in self.jobs.iter() {
+                has_jobs = true;
+                let state = entry.value().state.lock().unwrap();
+                if !state.is_terminal() {
+                    all_terminal = false;
+                    break;
+                }
+            }
+
+            if has_jobs && all_terminal {
+                if let Ok(elapsed) = now.duration_since(last_job_time) {
+                    if elapsed >= quiet_duration {
+                        tracing::info!(
+                            elapsed_secs = elapsed.as_secs(),
+                            "All jobs are terminal and quiet for {} seconds, cleaning up all completed jobs",
+                            quiet_duration.as_secs()
+                        );
+                        // Clean up all completed jobs
+                        let job_ids: Vec<u32> =
+                            self.jobs.iter().map(|entry| *entry.key()).collect();
+                        for job_id in job_ids {
+                            if self.cleanup_job(job_id).is_ok() {
+                                cleaned += 1;
+                            }
+                        }
+                        return cleaned;
+                    }
+                }
+            }
+        }
+
+        // Normal idle cleanup for individual jobs
         let mut to_remove = Vec::new();
 
         for entry in self.jobs.iter() {
