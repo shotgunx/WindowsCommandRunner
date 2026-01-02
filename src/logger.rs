@@ -1,19 +1,11 @@
 use crate::error::Result;
 use std::collections::HashMap;
 
-pub struct Logger {
-    #[allow(dead_code)]
-    event_log_source: String,
-    #[allow(dead_code)]
-    file_log_path: Option<String>,
-}
+pub struct Logger;
 
 impl Logger {
-    pub fn new(event_log_source: String, file_log_path: Option<String>) -> Self {
-        Self {
-            event_log_source,
-            file_log_path,
-        }
+    pub fn new(_event_log_source: String, _file_log_path: Option<String>) -> Self {
+        Self
     }
 
     pub fn log_event(
