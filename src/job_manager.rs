@@ -1,5 +1,3 @@
-#![cfg(windows)]
-
 use crate::error::{Error, Result};
 use dashmap::DashMap;
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
@@ -90,21 +88,21 @@ pub enum JobState {
 
 impl JobState {
     pub fn can_transition_to(&self, new_state: &JobState) -> bool {
-        match (self, new_state) {
-            (JobState::Created, JobState::Starting) => true,
-            (JobState::Starting, JobState::Running) => true,
-            (JobState::Starting, JobState::Failed) => true,
-            (JobState::Running, JobState::Exiting) => true,
-            (JobState::Running, JobState::Canceled) => true,
-            (JobState::Running, JobState::TimedOut) => true,
-            (JobState::Running, JobState::Failed) => true,
-            (JobState::Exiting, JobState::Completed) => true,
-            (JobState::Exiting, JobState::Failed) => true,
-            (JobState::Created, JobState::Canceled) => true,
-            (JobState::Starting, JobState::Canceled) => true,
-            (JobState::Exiting, JobState::Canceled) => true,
-            _ => false,
-        }
+        matches!(
+            (self, new_state),
+            (JobState::Created, JobState::Starting)
+                | (JobState::Starting, JobState::Running)
+                | (JobState::Starting, JobState::Failed)
+                | (JobState::Running, JobState::Exiting)
+                | (JobState::Running, JobState::Canceled)
+                | (JobState::Running, JobState::TimedOut)
+                | (JobState::Running, JobState::Failed)
+                | (JobState::Exiting, JobState::Completed)
+                | (JobState::Exiting, JobState::Failed)
+                | (JobState::Created, JobState::Canceled)
+                | (JobState::Starting, JobState::Canceled)
+                | (JobState::Exiting, JobState::Canceled)
+        )
     }
 
     pub fn is_terminal(&self) -> bool {

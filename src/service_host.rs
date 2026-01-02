@@ -1,5 +1,3 @@
-#![cfg(windows)]
-
 use crate::error::{Error, Result};
 use crate::job_manager::JobManager;
 use crate::pipe_server::PipeServer;

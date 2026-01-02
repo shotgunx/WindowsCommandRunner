@@ -1,5 +1,3 @@
-#![cfg(windows)]
-
 use crate::error::{Error, Result};
 use std::ffi::OsStr;
 use std::iter::once;
@@ -40,7 +38,7 @@ impl ChildPipeHandles {
                 &mut self.stderr_write,
             ];
             for h in handles {
-                if !h.is_invalid() && h.0 != null_mut() {
+                if !h.is_invalid() && !h.0.is_null() {
                     let _ = CloseHandle(*h);
                     *h = HANDLE::default();
                 }
@@ -68,7 +66,7 @@ pub struct LaunchedProcess {
 impl Drop for LaunchedProcess {
     fn drop(&mut self) {
         unsafe {
-            if !self.thread_handle.is_invalid() && self.thread_handle.0 != null_mut() {
+            if !self.thread_handle.is_invalid() && !self.thread_handle.0.is_null() {
                 let _ = CloseHandle(self.thread_handle);
             }
             // Don't close process_handle or job_object here - they're managed by JobHandle
@@ -147,7 +145,7 @@ impl ProcessLauncher {
         let wd_wide: Option<Vec<u16>> =
             working_directory.map(|wd| OsStr::new(wd).encode_wide().chain(once(0)).collect());
 
-        let env_block: Option<Vec<u16>> = environment.map(|env| Self::build_env_block(env));
+        let env_block: Option<Vec<u16>> = environment.map(Self::build_env_block);
 
         let mut startup_info = STARTUPINFOW {
             cb: std::mem::size_of::<STARTUPINFOW>() as u32,
@@ -183,7 +181,7 @@ impl ProcessLauncher {
                             .as_ref()
                             .map(|b| b.as_ptr() as *const std::ffi::c_void),
                         wd_ptr, // Pass PCWSTR directly, not wrapped in Option
-                        &mut startup_info,
+                        &startup_info,
                         &mut process_info,
                     )
                     .map_err(|e| Error::ProcessLaunchFailed(format!("CreateProcessW: {}", e)))?;
@@ -200,7 +198,7 @@ impl ProcessLauncher {
                             .as_ref()
                             .map(|b| b.as_ptr() as *const std::ffi::c_void),
                         PCWSTR::null(), // Use null PCWSTR instead of None
-                        &mut startup_info,
+                        &startup_info,
                         &mut process_info,
                     )
                     .map_err(|e| Error::ProcessLaunchFailed(format!("CreateProcessW: {}", e)))?;
@@ -221,7 +219,7 @@ impl ProcessLauncher {
 
     fn create_pipes() -> Result<ChildPipeHandles> {
         unsafe {
-            let mut sa = SECURITY_ATTRIBUTES {
+            let sa = SECURITY_ATTRIBUTES {
                 nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
                 bInheritHandle: true.into(),
                 lpSecurityDescriptor: null_mut(),

@@ -1,5 +1,3 @@
-#![cfg(windows)]
-
 use crate::error::{Error, Result};
 use crate::job_manager::{JobHandle, JobManager, JobState};
 use crate::process_launcher::ProcessLauncher;
@@ -68,13 +66,12 @@ impl CancellationManager {
                 tracing::warn!(error = %e, "Job object termination failed");
             } else {
                 let proc_ptr = job.process_handle.get();
-                if proc_ptr != 0 {
-                    if Self::wait_for_exit_timeout(proc_ptr, Duration::from_secs(5))
+                if proc_ptr != 0
+                    && Self::wait_for_exit_timeout(proc_ptr, Duration::from_secs(5))
                         .await
                         .is_ok()
-                    {
-                        return Ok(());
-                    }
+                {
+                    return Ok(());
                 }
             }
         }

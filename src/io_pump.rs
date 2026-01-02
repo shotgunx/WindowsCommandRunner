@@ -1,5 +1,3 @@
-#![cfg(windows)]
-
 use crate::error::{Error, Result};
 use crate::protocol::{Frame, FrameType, StreamId, FLAG_EOS, MAX_PAYLOAD_SIZE};
 use bytes::Bytes;
@@ -49,13 +47,11 @@ impl StreamPump {
                     .await
                     .map_err(|e| Error::Protocol(format!("Failed to send frame: {}", e)))?;
                 break;
+            } else if self.drop_policy {
+                tracing::warn!("Dropping output frame, window exhausted");
+                return Ok(());
             } else {
-                if self.drop_policy {
-                    tracing::warn!("Dropping output frame, window exhausted");
-                    return Ok(());
-                } else {
-                    self.window_condvar.notified().await;
-                }
+                self.window_condvar.notified().await;
             }
         }
         Ok(())
@@ -109,7 +105,7 @@ fn read_pipe_blocking(handle_ptr: isize, buffer_size: usize) -> Result<PipeReadR
                         is_eof: false,
                     })
                 } else {
-                    Err(Error::Io(std::io::Error::from_raw_os_error(code.0 as i32)))
+                    Err(Error::Io(std::io::Error::from_raw_os_error(code.0)))
                 }
             }
         }

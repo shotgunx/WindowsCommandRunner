@@ -1,5 +1,3 @@
-#![cfg(windows)]
-
 use crate::cancellation::CancellationManager;
 use crate::error::{Error, Result};
 use crate::io_pump::{start_output_pump, StreamPump};
@@ -374,7 +372,7 @@ impl PipeServer {
                     Some(&mut bytes_read),
                     None,
                 )
-                .map_err(|e| Error::Io(std::io::Error::from_raw_os_error(e.code().0 as i32)))?;
+                .map_err(|e| Error::Io(std::io::Error::from_raw_os_error(e.code().0)))?;
             }
 
             if bytes_read == 0 {
@@ -416,7 +414,7 @@ impl PipeServer {
                     Some(&mut bytes_written),
                     None,
                 )
-                .map_err(|e| Error::Io(std::io::Error::from_raw_os_error(e.code().0 as i32)))?;
+                .map_err(|e| Error::Io(std::io::Error::from_raw_os_error(e.code().0)))?;
             }
             offset += bytes_written as usize;
         }
