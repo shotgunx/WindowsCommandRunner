@@ -3,21 +3,24 @@
 use crate::cancellation::CancellationManager;
 use crate::error::{Error, Result};
 use crate::io_pump::{start_output_pump, StreamPump};
-use crate::job_manager::{JobManager, JobState, SafeHandle};
+use crate::job_manager::{JobManager, JobState};
 use crate::process_launcher::ProcessLauncher;
 use crate::protocol::{
     ExitPayload, Frame, FrameType, HelloPayload, RunPayload, StreamId, PROTOCOL_VERSION,
 };
-use bytes::{Bytes, BytesMut};
+use bytes::Bytes;
 use std::ptr::null_mut;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Semaphore};
 use windows::core::PCWSTR;
-use windows::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE, ERROR_BROKEN_PIPE};
+use windows::Win32::Foundation::{CloseHandle, ERROR_BROKEN_PIPE, HANDLE};
 use windows::Win32::Security::SECURITY_ATTRIBUTES;
-use windows::Win32::Storage::FileSystem::{ReadFile, WriteFile};
+use windows::Win32::Storage::FileSystem::{ReadFile, WriteFile, FILE_FLAGS_AND_ATTRIBUTES};
+
+// PIPE_ACCESS_DUPLEX (0x3) - Pipe can be used for both reading and writing
+const PIPE_ACCESS_DUPLEX: FILE_FLAGS_AND_ATTRIBUTES = FILE_FLAGS_AND_ATTRIBUTES(0x00000003);
 use windows::Win32::System::Pipes::{
-    ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, PIPE_READMODE_BYTE,
+    ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, PIPE_MODE, PIPE_READMODE_BYTE,
     PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
 };
 
@@ -98,7 +101,7 @@ impl PipeServer {
         unsafe {
             let handle = CreateNamedPipeW(
                 PCWSTR::from_raw(pipe_name_wide.as_ptr()),
-                windows::Win32::System::Pipes::PIPE_ACCESS_DUPLEX,
+                PIPE_ACCESS_DUPLEX,
                 PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
                 PIPE_UNLIMITED_INSTANCES,
                 PIPE_BUFFER_SIZE,

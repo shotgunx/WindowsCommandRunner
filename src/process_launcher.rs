@@ -217,9 +217,10 @@ impl ProcessLauncher {
                 .map_err(|e| Error::ProcessLaunchFailed(format!("CreatePipe stderr: {}", e)))?;
 
             // Make parent ends non-inheritable
-            let _ = SetHandleInformation(stdin_write, 1, HANDLE_FLAG_INHERIT);
-            let _ = SetHandleInformation(stdout_read, 1, HANDLE_FLAG_INHERIT);
-            let _ = SetHandleInformation(stderr_read, 1, HANDLE_FLAG_INHERIT);
+            // Second param is mask, third is flags. Setting HANDLE_FLAG_INHERIT to 0 means non-inheritable
+            let _ = SetHandleInformation(stdin_write, HANDLE_FLAG_INHERIT.0, 0);
+            let _ = SetHandleInformation(stdout_read, HANDLE_FLAG_INHERIT.0, 0);
+            let _ = SetHandleInformation(stderr_read, HANDLE_FLAG_INHERIT.0, 0);
 
             Ok(ChildPipeHandles {
                 stdin_read,

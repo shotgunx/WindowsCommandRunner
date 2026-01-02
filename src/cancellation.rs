@@ -7,11 +7,11 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
 use windows::Win32::Foundation::HANDLE;
-use windows::Win32::System::Threading::{
-    GetExitCodeProcess, TerminateProcess, WaitForSingleObject, WAIT_OBJECT_0,
-};
+use windows::Win32::System::Threading::{GetExitCodeProcess, TerminateProcess, WaitForSingleObject};
 
 const WAIT_TIMEOUT_MS: u32 = 0;
+// WAIT_OBJECT_0 = 0 - The state of the object is signaled
+const WAIT_OBJECT_0: u32 = 0;
 
 pub struct CancellationManager;
 
@@ -97,7 +97,7 @@ impl CancellationManager {
         while Instant::now() < deadline {
             let signaled = unsafe {
                 let result = WaitForSingleObject(process_handle, WAIT_TIMEOUT_MS);
-                result == WAIT_OBJECT_0
+                result.0 == WAIT_OBJECT_0
             };
 
             if signaled {
@@ -120,7 +120,7 @@ impl CancellationManager {
             unsafe {
                 loop {
                     let result = WaitForSingleObject(handle, 1000);
-                    if result == WAIT_OBJECT_0 {
+                    if result.0 == WAIT_OBJECT_0 {
                         let mut exit_code: u32 = 0;
                         if GetExitCodeProcess(handle, &mut exit_code).is_ok() {
                             return Ok(exit_code as i32);
